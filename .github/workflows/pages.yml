@@ -39,11 +39,10 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      # Note: `enablement: true` is deliberately NOT set here. Creating a Pages
-      # site needs repository-admin rights, which the workflow's GITHUB_TOKEN
-      # never has, so it fails with an opaque "Resource not accessible by
-      # integration". Without it the action gives the actionable message
-      # instead: enable Pages once under Settings -> Pages.
+      # Pages must already be enabled on the repository (Settings -> Pages ->
+      # Source: GitHub Actions). `enablement: true` cannot do it for you:
+      # creating a Pages site needs repository-admin rights, which a workflow's
+      # GITHUB_TOKEN never carries.
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
