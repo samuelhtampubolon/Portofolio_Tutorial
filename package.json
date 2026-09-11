@@ -1,0 +1,14 @@
+{
+  "name": "tessercad",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A free, browser-based parametric 3D CAD, 2D drafting and 4D simulation studio.",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "setup": "node tools/setup-dev.mjs",
+    "test": "node tools/setup-dev.mjs && node tools/test.mjs",
+    "serve": "python3 -m http.server 8080"
+  },
+  "keywords": ["cad", "3d", "parametric", "csg", "dxf", "simulation", "webgl", "threejs"]
+}
