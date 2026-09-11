@@ -4,7 +4,7 @@
 Parametric 3D solid modelling, 2D drafting, and 4D — three dimensions plus time — simulation.
 No installation, no account, no server. Your model never leaves your machine.
 
-> **▶ Live app:** https://samuelhtampubolon.github.io/portofolio_tutorial/
+> **▶ Live app:** https://samuelhtampubolon.github.io/Portofolio_Tutorial/
 >
 > Published automatically by the [deploy workflow](../../actions/workflows/pages.yml) on every
 > push to `main`.
@@ -97,7 +97,7 @@ it CAD rather than a 3D drawing program.
 
 ## Getting started
 
-Open the [live app](https://samuelhtampubolon.github.io/portofolio_tutorial/) and it loads a
+Open the [live app](https://samuelhtampubolon.github.io/Portofolio_Tutorial/) and it loads a
 demo bracket. Then:
 
 1. **Model** — click the bracket, and on the right change `plate_w` from `120` to `180`.
