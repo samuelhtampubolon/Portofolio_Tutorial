@@ -6,7 +6,7 @@ No installation, no account, no server. Your model never leaves your machine.
 
 > **▶ Live app:** https://samuelhtampubolon.github.io/portofolio_tutorial/
 >
-> *(If the link 404s, the repository owner needs to switch on GitHub Pages once — see [Deploying](#deploying-your-own-copy).)*
+> *(The first deploy takes a minute or two after a push to `main`.)*
 
 ![The Model workspace: a parametric bracket built from booleans and patterns](docs/images/model.png)
 
@@ -137,10 +137,12 @@ vendored copy first; nothing is downloaded.
 ## Deploying your own copy
 
 1. Fork this repository.
-2. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-3. Push to `main`. The [workflow](.github/workflows/pages.yml) runs the tests and publishes.
+2. Push to `main`. The [workflow](.github/workflows/pages.yml) runs the tests and publishes.
 
-That is the whole deployment: free hosting, public URL, no server to run. The app is a static
+That is the whole deployment: free hosting, public URL, no server to run. The workflow passes
+`enablement: true` to `actions/configure-pages`, so it switches Pages on for you the first
+time it runs — there is no Settings step. (Pages is free on public repositories; on a private
+fork it needs a paid plan.) The app is a static
 site, so it works equally well on Netlify, Vercel, Cloudflare Pages, or any web host you can
 copy files to.
 
