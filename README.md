@@ -6,9 +6,8 @@ No installation, no account, no server. Your model never leaves your machine.
 
 > **▶ Live app:** https://samuelhtampubolon.github.io/portofolio_tutorial/
 >
-> *First time only:* the repository owner enables Pages under
-> **Settings → Pages → Build and deployment → Source: GitHub Actions**, then re-runs the
-> [deploy workflow](../../actions/workflows/pages.yml). Every push to `main` publishes after that.
+> Published automatically by the [deploy workflow](../../actions/workflows/pages.yml) on every
+> push to `main`.
 
 ![The Model workspace: a parametric bracket built from booleans and patterns](docs/images/model.png)
 
@@ -141,7 +140,9 @@ vendored copy first; nothing is downloaded.
 1. Fork this repository.
 2. **Settings → Pages → Build and deployment → Source: GitHub Actions.** This one-time toggle
    cannot be automated: creating a Pages site needs repository-admin rights, and a workflow's
-   `GITHUB_TOKEN` never has them.
+   `GITHUB_TOKEN` never has them. If GitHub offers to add a sample workflow during that step,
+   decline it — this repository already has one, and a second workflow in the same
+   `concurrency: pages` group just cancels the first at random.
 3. Push to `main`. The [workflow](.github/workflows/pages.yml) runs the tests and publishes.
 
 That is the whole deployment: free hosting, public URL, no server to run. Pages is free on
