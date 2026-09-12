@@ -4,6 +4,7 @@ A walkthrough of the three workspaces, written so you can follow along in the ap
 
 - [0. The interface](#0-the-interface)
 - [0.5 On a phone](#05-on-a-phone)
+- [0.6 On a tablet](#06-on-a-tablet)
 - [1. The basics](#1-the-basics)
 - [2. Model — parametric solids](#2-model--parametric-solids)
 - [3. Draft — 2D drawing](#3-draft--2d-drawing)
@@ -35,7 +36,8 @@ Press `Q` then `1`–`8` without moving the mouse.
 the operations that apply to it.
 
 **Panels.** `T` toggles the left outline panel, `N` the right properties panel. Both collapse
-to give the viewport the whole window; on a phone they slide in from tabs at the screen edges.
+to give the viewport the whole window; on a tablet one is docked at a time, and on a phone they
+slide up as bottom sheets.
 
 **Status bar.** The left side tells you what the current tool wants next. The right side shows
 the live mouse-button map for the workspace you are in, the selection count, the units and the
@@ -84,7 +86,7 @@ Open one and change its parameters; that is the quickest way to see what a featu
 
 ## 0.5 On a phone
 
-Below 900px TesserCAD swaps its whole chrome for a touch layout. Everything the desktop can do
+Below 700px TesserCAD swaps its whole chrome for a touch layout. Everything the desktop can do
 is still reachable — it just gets there differently.
 
 **Bottom bar.** Model, Draft, Simulate, Panels, More. The first three switch workspace; Panels
@@ -116,6 +118,37 @@ second finger down turns the gesture into a pan without leaving a stray point be
 **What still needs a keyboard.** The modal `G`/`R`/`S` transform operators and the shortcut map.
 On a phone, use the gizmo from **Modify → Gizmo** and the numeric fields in Properties instead;
 both are fully touch-sized.
+
+---
+
+## 0.6 On a tablet
+
+From 700px to 1279px you get the desktop chrome with one change: **one side panel is docked at
+a time** instead of two. Two 280px panels on an iPad in portrait would leave roughly 200px of
+viewport, so the tablet trades the second panel for a usable model view.
+
+**The dock switch.** The segmented control at the top of the docked panel swaps between Outline
+(Layers in Draft, Bodies in Simulate) and Properties. Swapping does not change the viewport
+width, so nothing jumps. Your choice is remembered the next time you open the app.
+
+**Putting the dock away.** The top button of the floating cluster hides and shows the whole dock
+and hands the full width to the viewport. It is the only control that can bring the dock back
+once it is gone, which is why it sits in the viewport rather than in a menu.
+
+**The Menu button** at the top left holds all eleven menus as submenus, in the same order and
+with the same items as the desktop menu bar. Tap a menu to open its submenu; tapping back into
+the parent list keeps everything open.
+
+**Floating cluster**, bottom right: dock toggle, zoom-to-fit, views and display, undo. In Draft
+the views button becomes object snap. The views button opens a popover beside itself rather
+than a bottom sheet, since sheets are phone chrome.
+
+**Gestures** are the same as on a phone: one finger orbits or draws, two fingers pan and pinch,
+long-press is the context menu, and a Draft tool commits on lift.
+
+**With a keyboard attached** everything behaves as it does on the desktop, including the modal
+`G`/`R`/`S` operators. `T` and `N` dock the outline and properties panels; pressing the same key
+again puts the dock away.
 
 ---
 

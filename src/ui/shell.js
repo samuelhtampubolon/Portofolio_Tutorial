@@ -144,7 +144,10 @@ export function promptDialog(title, label, value, onOk, { placeholder = '', help
 /* ------------------------------------------------------------- the menus */
 
 let openDrop = null;
-let openSub = null;
+// A stack, not a single node: the compact tablet menu nests one level deeper
+// than the desktop menu bar, and tracking only the innermost submenu makes a
+// tap back into its parent look like a click outside the menu.
+let openSubs = [];
 
 /**
  * A dropdown menu.
@@ -175,7 +178,10 @@ function buildMenu(items, depth = 0) {
       role: 'menuitem',
       disabled: it.disabled === true,
       onclick: (e) => {
-        if (hasSub) { e.stopPropagation(); return; }
+        // A touch pointer cannot hover, so the tap that lands on a parent row
+        // is the only chance to open its submenu. openSubmenu is idempotent at
+        // a given depth, so doing it here as well costs a mouse user nothing.
+        if (hasSub) { e.stopPropagation(); openSubmenu(row, it.sub, depth + 1); return; }
         closeDropdown();
         it.run?.();
       },
@@ -204,13 +210,17 @@ function openSubmenu(row, items, depth) {
   const sub = buildMenu(items, depth);
   document.body.appendChild(sub);
   const r = row.getBoundingClientRect();
-  sub.style.left = `${Math.min(r.right - 3, innerWidth - sub.offsetWidth - 8)}px`;
-  sub.style.top = `${Math.min(r.top - 5, innerHeight - sub.offsetHeight - 8)}px`;
-  openSub = { node: sub, depth };
+  const w = sub.offsetWidth;
+  // Flip to the parent's left edge rather than clamping, which would drop the
+  // submenu on top of the menu it came from. Tablet widths hit this often.
+  const left = r.right + w > innerWidth - 8 ? Math.max(8, r.left - w + 3) : r.right - 3;
+  sub.style.left = `${left}px`;
+  sub.style.top = `${Math.max(8, Math.min(r.top - 5, innerHeight - sub.offsetHeight - 8))}px`;
+  openSubs.push({ node: sub, depth });
 }
 
 function closeSubmenu(depth = 0) {
-  if (openSub && openSub.depth >= depth) { openSub.node.remove(); openSub = null; }
+  while (openSubs.length && openSubs[openSubs.length - 1].depth >= depth) openSubs.pop().node.remove();
 }
 
 function position(menu, anchor, align, below) {
@@ -225,7 +235,7 @@ function position(menu, anchor, align, below) {
 }
 
 function onDocDown(e) {
-  const inMenu = (openDrop && openDrop.menu.contains(e.target)) || (openSub && openSub.node.contains(e.target));
+  const inMenu = (openDrop && openDrop.menu.contains(e.target)) || openSubs.some(s => s.node.contains(e.target));
   if (inMenu) { document.addEventListener('pointerdown', onDocDown, true); return; }
   closeDropdown();
 }

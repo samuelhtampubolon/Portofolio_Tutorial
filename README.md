@@ -62,7 +62,7 @@ the eight things worth trying first.
 
 ### On a phone
 
-Below 900px the desktop chrome is replaced rather than shrunk, because a menu bar that vanishes
+Below 700px the desktop chrome is replaced rather than shrunk, because a menu bar that vanishes
 and 27px controls are not a mobile interface:
 
 <table>
@@ -86,6 +86,36 @@ and 27px controls are not a mobile interface:
   iOS Safari zooms the page on focus.
 - Safe-area insets for notches and home indicators; a landscape layout that keeps the viewport
   usable.
+
+### On a tablet
+
+A tablet is a third problem, not a large phone or a small desktop. An iPad in portrait has the
+width for a menu bar and a real side panel, just not for two panels beside a usable viewport:
+280px each would leave about 200px of 3D, which is not a CAD viewport. So from 700px to 1279px
+TesserCAD keeps the desktop chrome and docks **one** panel at a time.
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/tablet-portrait.png" alt="Modelling on a tablet in portrait"></td>
+<td width="50%"><img src="docs/images/tablet-landscape.png" alt="Modelling on a tablet in landscape"></td>
+</tr>
+</table>
+
+- **One dockable panel.** A segmented switch in the panel head swaps between Outline and
+  Properties without changing the viewport width, so the model never jumps as you work. Your
+  choice is remembered across sessions.
+- **A collapse toggle in the floating cluster**, which is the only control that can bring the
+  dock back once it is away — so it lives where your hand already is rather than in a menu.
+- **The menu bar collapses to one button** holding the same eleven menus as submenus. Nothing
+  is dropped and nothing scrolls off the right edge, which is what used to happen to the
+  document chip and the theme and help buttons on an iPad in landscape.
+- **Submenus open on tap.** A touch pointer cannot hover, so every parent row opens its submenu
+  on the tap that lands on it, and tapping back into the parent menu does not dismiss it.
+- **View controls come up as a popover** anchored to the cluster rather than as a bottom sheet:
+  sheets are phone chrome and are styled only at that breakpoint.
+- **Long-press replaces right-click** here too, and every visible control clears 28px.
+- The `T` and `N` keys, the Window menu and the panel-head buttons all drive the same dock, so
+  an attached keyboard behaves the way it does on the desktop.
 
 ### Three things it does better than the packages it imitates
 
@@ -247,7 +277,7 @@ src/
   ui/
     icons.js          145 inline SVG icons, one visual language, no icon font
     shell.js          menus, palette, quick menu, modals, toasts, form controls
-    mobile.js         the phone shell: bottom bar, sheets, long-press
+    mobile.js         the phone shell and the tablet floating cluster
     commands.js       the command registry and the starter templates
     menus.js          menu-bar and ribbon layouts, generated per workspace
     operators.js      modal G/R/S transforms with axis locking and typed input
@@ -277,10 +307,14 @@ Some decisions worth knowing about:
   and `enabled` predicates — so a command cannot exist in one place and not another.
 - **145 inline SVG icons**, no icon font and no sprite sheet: each is a path string drawn in
   `currentColor`, so icons inherit theme and state for free.
-- **Phone layout comes from media queries, never from JavaScript.** A `MediaQueryList` change
+- **Layout comes from media queries, never from JavaScript.** A `MediaQueryList` change
   event is not reliably delivered in every engine, and a missed one would leave desktop chrome
-  on a phone-sized screen. The class JS sets is used only to decide *behaviour* — which sheet a
-  control opens — and never for anything visual.
+  on a phone-sized screen. The classes JS sets (`phone`, `tablet`) are used only to decide
+  *behaviour* — which sheet or popover a control opens — and never for anything visual.
+- **Three tiers, one set of commands.** Phone (≤699px), tablet (700–1279px) and desktop
+  (≥1280px) share the same command registry, the same panel DOM and the same keyboard map.
+  `togglePanel` is the single place that knows which layout is live, so the `T` key, the
+  Window menu and a panel-head button can never disagree about what a panel does.
 
 ## Honest limitations
 
@@ -305,9 +339,9 @@ It is worth being clear about what this is not, so you can decide whether it fit
   WebM in Chrome and Firefox; Safari support varies.
 
 Requires a browser with WebGL 2 and ES modules — Chrome, Edge, Firefox and Safari from
-roughly 2021 onwards. The phone layout is a real interface rather than a fallback, but the
-modal transform operators and the 60-odd keyboard shortcuts need a keyboard, so serious
-modelling is still faster on a desktop.
+roughly 2021 onwards. The phone and tablet layouts are real interfaces rather than fallbacks,
+but the modal transform operators and the 60-odd keyboard shortcuts need a keyboard, so serious
+modelling is still faster on a desktop, or on a tablet with one attached.
 
 ## Contributing
 

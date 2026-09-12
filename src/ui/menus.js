@@ -289,4 +289,11 @@ export const SHORT_LABEL = {
   'sim.dropTest': 'Drop test', 'sim.motor': 'Motor', 'sim.bake': 'Bake', 'sim.record': 'Record',
 };
 
+/** Menu-bar labels to icons, for the compact single-button menu on a tablet. */
+export const MENU_ICON = {
+  File: 'file-new', Edit: 'undo', Create: 'box', Modify: 'union', View: 'view-iso',
+  Measure: 'ruler', Draft: 'sketch', Simulate: 'timeline', Export: 'file-export',
+  Window: 'workspace', Help: 'help',
+};
+
 export { ICON_FOR };

@@ -14,15 +14,33 @@
  *   · long-press in place of right-click;
  *   · a floating view cluster instead of the desktop view cube.
  *
+ * A tablet is a different problem: it has the width for a menu bar and a real
+ * panel, just not for two of them beside a usable viewport. That tier keeps the
+ * desktop chrome and docks a single switchable panel; it shares the floating
+ * cluster from here and nothing else.
+ *
  * Desktop behaviour is untouched: everything here activates only below the
- * phone breakpoint and tears itself down cleanly above it.
+ * desktop breakpoint and tears itself down cleanly above it.
  */
-import { el, clear, icon, closeDropdown, closeQuickMenu } from './shell.js';
+import { el, clear, icon, dropdown, closeDropdown, closeQuickMenu } from './shell.js';
 import { menuDefs } from './menus.js';
 import { store } from '../core/doc.js';
 
-export const PHONE_QUERY = '(max-width: 900px)';
+/*
+ * These must stay in lockstep with the breakpoint header in styles/app.css.
+ *
+ * The phone tier stops at 699px so every iPad in portrait gets the tablet shell,
+ * the 744pt mini included; the widest phone in portrait is around 430pt, so the
+ * gap is comfortable. The second clause catches a phone held in landscape, which
+ * is wide enough to clear 700px but far too short for a desktop layout, and
+ * `pointer: coarse` keeps a short desktop window out of it.
+ */
+export const PHONE_QUERY = '(max-width: 699px), (max-height: 460px) and (pointer: coarse)';
+export const TABLET_QUERY = '(min-width: 700px) and (max-width: 1279px) and (min-height: 461px)';
 export const isPhone = () => matchMedia(PHONE_QUERY).matches;
+export const isTablet = () => matchMedia(TABLET_QUERY).matches;
+/** True where the pointer cannot hover: submenus must open on tap, not hover. */
+export const isCoarse = () => matchMedia('(pointer: coarse)').matches;
 
 const WS = [
   ['model', 'Model', 'cube3d'],
@@ -39,6 +57,7 @@ export class MobileShell {
     this._build();
     this.mq = matchMedia(PHONE_QUERY);
     this.mq.addEventListener('change', () => this.onBreakpoint());
+    matchMedia(TABLET_QUERY).addEventListener('change', () => this.onBreakpoint());
     // A MediaQueryList change event is not reliably delivered in every engine
     // and headless configuration, and missing it leaves the desktop chrome on
     // a phone-sized screen. Re-checking on resize costs nothing: onBreakpoint
@@ -50,7 +69,7 @@ export class MobileShell {
     // Rotating the device changes the aspect ratio enough that the previous
     // framing is meaningless, so re-fit rather than leave the model off-screen.
     matchMedia('(orientation: portrait)').addEventListener('change', () => {
-      if (isPhone()) setTimeout(() => { this.app.vp.resize(); this.app.draft.resize(); this.app.zoomFit(); }, 180);
+      if (isPhone() || isTablet()) setTimeout(() => { this.app.vp.resize(); this.app.draft.resize(); this.app.zoomFit(); }, 180);
     });
     this.onBreakpoint();
   }
@@ -110,9 +129,16 @@ export class MobileShell {
     }
   }
 
-  /** The view cube and axis gizmo are unusable at this size; this replaces them. */
+  /**
+   * The view cube and axis gizmo are unusable at this size; this replaces them.
+   *
+   * On a tablet the same cluster also carries the dock toggle, because that is
+   * the only way back to the panels once the dock is collapsed.
+   */
   renderFab() {
-    const mode = this.app.workspace === 'draft' ? 'draft' : '3d';
+    const base = this.app.workspace === 'draft' ? 'draft' : '3d';
+    const tablet = isTablet();
+    const mode = tablet ? `${base}+dock` : base;
     if (this.fabMode !== mode) {
       this.fabMode = mode;
       this.fabBtns = new Map();
@@ -122,30 +148,46 @@ export class MobileShell {
         f.appendChild(b);
         this.fabBtns.set(key, b);
       };
-      if (mode === 'draft') {
+      if (tablet) add('dock', 'panel-right', 'Show or hide the side panel', () => this.app.toggleDock());
+      if (base === 'draft') {
         add('fit', 'fit', 'Zoom to the drawing extents', () => this.app.draft.zoomExtents());
         add('snap', 'magnet', 'Object snap', () => { this.app.toggleDraft('snap'); this.renderFab(); });
         add('undo', 'undo', 'Undo', () => store.undo());
       } else {
         add('fit', 'fit', 'Zoom to fit', () => this.app.zoomFit());
-        add('view', 'view-iso', 'Views and display', () => this.openViewSheet());
+        // Bottom sheets are phone chrome and are styled only at that breakpoint,
+        // so the tablet gets the same controls as a popover on the button.
+        add('view', 'view-iso', 'Views and display', () => (isTablet()
+          ? this.openViewMenu(this.fabBtns.get('view'))
+          : this.openViewSheet()));
         add('undo', 'undo', 'Undo', () => store.undo());
       }
     }
     this.fabBtns.get('snap')?.classList.toggle('on', this.app.draft.snap.on);
+    this.fabBtns.get('dock')?.classList.toggle('on', !document.getElementById('workarea').classList.contains('dock-collapsed'));
     const undo = this.fabBtns.get('undo');
     if (undo) undo.disabled = !store.canUndo();
   }
 
   onBreakpoint() {
-    const on = isPhone();
-    const changed = this._wasPhone !== on;
-    this._wasPhone = on;
-    document.documentElement.classList.toggle('phone', on);
-    if (!on) {
+    const phone = isPhone();
+    const tablet = !phone && isTablet();
+    const changed = this._wasPhone !== phone || this._wasTablet !== tablet;
+    this._wasPhone = phone;
+    this._wasTablet = tablet;
+    // The layouts themselves come from media queries, never from these classes:
+    // a MediaQueryList change event is not delivered reliably enough to hang a
+    // layout on. They are kept only so that other code and the test suites can
+    // ask which tier is live without re-deriving the queries.
+    document.documentElement.classList.toggle('phone', phone);
+    document.documentElement.classList.toggle('tablet', tablet);
+    if (!phone) {
       this.closeSheet();
       this.restorePanels();
     }
+    // A dock collapsed on a tablet must not follow you up to the desktop, where
+    // the class would hide both panels with nothing on screen to bring back.
+    if (!tablet) document.getElementById('workarea')?.classList.remove('dock-collapsed');
     this.renderBar();
     this.renderFab();
     // The canvas changes shape when the chrome swaps, so anything framed
@@ -158,7 +200,7 @@ export class MobileShell {
   }
 
   refresh() {
-    if (!isPhone()) return;
+    if (!isPhone() && !isTablet()) return;
     this.renderBar();
     this.renderFab();
   }
@@ -361,6 +403,20 @@ export class MobileShell {
         it.key ? el('span', { class: 'kbd', text: it.key }) : null,
       ]));
     }
+  }
+
+  /** The view sheet's contents, anchored to the floating cluster on a tablet. */
+  openViewMenu(anchor) {
+    if (!anchor) return;
+    if (anchor.classList.contains('open')) { closeDropdown(); return; }
+    const grp = (header, ids) => [{ header }, ...ids.map(id => this.app.menuItem(id))];
+    dropdown(anchor, [
+      ...grp('Standard views', ['view.iso', 'view.front', 'view.right', 'view.top', 'view.back', 'view.left']),
+      '-',
+      ...grp('Display', ['shade.shaded-edges', 'shade.shaded', 'shade.wire', 'shade.xray', 'view.ortho', 'view.grid']),
+      '-',
+      ...grp('Framing', ['view.fit', 'view.selection', 'mod.isolate', 'mod.showAll', 'view.section', 'view.theme']),
+    ], { align: 'right', below: false });
   }
 
   /* --------------------------------------------------- the view sheet */
