@@ -34,6 +34,7 @@ import { partsFrom, costDocument, compare, crossovers, levers } from './cost.js'
 import { PROCESSES, processOf } from './process.js';
 import { standards, limits } from './standards.js';
 import { zip } from './zip.js';
+import { QUALITY, cleanMesh } from './tessellate.js';
 
 /* ------------------------------------------------------- design intent */
 
@@ -225,6 +226,16 @@ function readme(doc, build, report, estimate, cross, opts) {
     L.push('> These are order-of-magnitude figures from a generic rate model, not a quote. They are here to show which process wins and which dimension drives the price; the absolute numbers will not match your supplier.', '');
   }
 
+  if (opts.mesh) {
+    const q = QUALITY[opts.mesh.quality] || QUALITY.standard;
+    L.push('## Mesh', '');
+    L.push(`- Quality: **${q.label}**${q.tol ? `, chord tolerance ${q.tol} mm` : ''}`);
+    if (q.tol) L.push(`- No point on \`model.stl\` is more than ${q.tol} mm from the surface it represents.`);
+    L.push(`- ${opts.mesh.after.toLocaleString()} triangles after welding, from ${opts.mesh.before.toLocaleString()}${opts.mesh.dropped ? ` (${opts.mesh.dropped} degenerate removed)` : ''}.`);
+    L.push('');
+    L.push('A mesh without its tolerance is a number without a unit, which is why it is stated here rather than left to be guessed at.', '');
+  }
+
   L.push('## Measured', '');
   L.push(`- Bodies: ${build.stats.bodies}`);
   L.push(`- Volume: ${build.stats.volume.toFixed(2)} mm³`);
@@ -266,8 +277,21 @@ export function releasePackage(app, { process: processId = null, batch = null, f
   const files = [];
   const add = (name, data) => { if (data != null) files.push({ name, data }); };
 
+  // Weld and drop degenerates before writing. Boolean output carries a
+  // duplicated vertex at every split and slivers of near-zero area, and both
+  // are pure file size to whoever receives the package.
   const root = exportGroup(app.vp);
+  let meshStats = null;
   if (root.children.length) {
+    let before = 0, after = 0, dropped = 0;
+    for (const child of root.children) {
+      if (!child.isMesh) continue;
+      const { geometry, stats } = cleanMesh(child.geometry);
+      child.geometry.dispose();
+      child.geometry = geometry;
+      before += stats.trianglesBefore; after += stats.trianglesAfter; dropped += stats.dropped;
+    }
+    meshStats = { before, after, dropped, quality: s.exportQuality || 'standard' };
     add('model.stl', new Uint8Array(new STLExporter().parse(root, { binary: true })));
     add('model.obj', `# ${APP_NAME} ${APP_VERSION}\n${new OBJExporter().parse(root)}`);
   }
@@ -284,7 +308,7 @@ export function releasePackage(app, { process: processId = null, batch = null, f
   add('bom.csv', bomCSV(doc, build));
   add('checks.csv', checksCSV(report));
   if (parts.length) add('cost-estimate.csv', costCSV(parts, qty, { ...s.rates, materialPrice: s.materialPrice }));
-  add('README.md', readme(doc, build, report, estimate, cross, { process: proc, batch: qty }));
+  add('README.md', readme(doc, build, report, estimate, cross, { process: proc, batch: qty, mesh: meshStats }));
 
   const png = app.vp.snapshot(2);
   if (png) add('preview.png', dataURLToBytes(png));

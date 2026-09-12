@@ -11,6 +11,7 @@ A walkthrough of the three workspaces, written so you can follow along in the ap
 - [4. Simulate — the fourth dimension](#4-simulate--the-fourth-dimension)
 - [5. Files and exchange](#5-files-and-exchange)
 - [5.5 Studio: checking, costing and shipping](#55-studio-checking-costing-and-shipping)
+- [5.6 Analyse: sections, clashes, variants and versions](#56-analyse-sections-clashes-variants-and-versions)
 - [6. Keyboard reference](#6-keyboard-reference)
 - [7. Worked examples](#7-worked-examples)
 
@@ -18,15 +19,15 @@ A walkthrough of the three workspaces, written so you can follow along in the ap
 
 ## 0. The interface
 
-**Menu bar.** Twelve menus across the top: File, Edit, Create, Modify, View, Measure, Draft,
-Simulate, Export, Window, Studio, Help. Submenus open on hover, toggles show a checkmark, and anything
+**Menu bar.** Thirteen menus across the top: File, Edit, Create, Modify, View, Measure, Draft,
+Simulate, Export, Window, Studio, Analyse, Help. Submenus open on hover, toggles show a checkmark, and anything
 that doesn't apply right now is greyed rather than hidden — so you can always see that it
 exists and work out why it is unavailable.
 
 **Ribbon.** The second row is a contextual toolbar that changes with the workspace, grouped and
 labelled (Create, Combine, Repeat, Transform…). It scrolls sideways when the window is narrow.
 
-**Command palette — `Ctrl K`.** Ranked fuzzy search over all 177 commands. Your recent commands
+**Command palette — `Ctrl K`.** Ranked fuzzy search over all 188 commands. Your recent commands
 appear first when the box is empty. This is the fastest way to reach anything you haven't
 memorised a shortcut for.
 
@@ -171,7 +172,7 @@ plain JSON.
 **Undo.** `Ctrl`+`Z` / `Ctrl`+`Shift`+`Z`, 120 steps deep, covering everything: geometry,
 drawing, parameters, animation and view settings.
 
-**Command palette.** `Ctrl`+`K` finds any of the 177 commands by fuzzy name. If you cannot
+**Command palette.** `Ctrl`+`K` finds any of the 188 commands by fuzzy name. If you cannot
 find a button, look here first.
 
 ### Navigating the 3D view
@@ -587,6 +588,116 @@ Once you have finished the eight-step tour, the card in the corner of the viewpo
 tutor: it explains the engineering reason behind whatever the model is currently doing, one at
 a time, and never repeats one you have read. `Studio → Engineering notes` shows them all at
 once.
+
+---
+
+## 5.6 Analyse: sections, clashes, variants and versions
+
+Where **Studio** is about the work around the design, **Analyse** is about getting real numbers out
+of the geometry you have.
+
+### Section properties  `Ctrl`+`Shift`+`A`
+
+Select a body and cut it. The dialog draws the true cross-section to scale, marks its centroid, and
+draws its principal axes, then reports:
+
+| | |
+|---|---|
+| Area | Exact, holes subtracted |
+| Iₓₓ, I_yy, Iₓᵧ | Second moments about the centroid |
+| I₁, I₂ | Principal moments: the strongest and weakest directions |
+| Principal axis | The angle those directions sit at, which is rarely the one you would guess |
+| S₁ | Section modulus, the number that turns a bending moment into a stress |
+| r₁ | Radius of gyration, for buckling |
+
+Then give it a load case — cantilever, simply supported, built in at both ends, or pure axial — with
+a force, a span and a safety factor, and it reports the bending stress and the utilisation against
+the material's yield.
+
+**Read the principal axis line.** A section is usually far stronger one way than the other, and the
+whole point of the drawing is to show you which way that is before you orient the part.
+
+This is exact section geometry and a first-order stress from it: the calculation an engineer does on
+paper before deciding whether a part is worth analysing properly. It knows nothing about stress
+concentrations, how the load is introduced, fatigue, or anything three-dimensional. **It is not
+finite element analysis**, and the dialog says so every time.
+
+### Clash check
+
+Reports the volume two bodies genuinely share, and where its centre is. Not "their bounding boxes
+overlap" but "these two parts occupy 412 mm³ of the same space, centred here."
+
+Bounding boxes are still used as the first pass, because box overlap is a necessary condition for a
+clash and discarding the rest is free. Only the survivors get an exact intersection.
+
+The Design Doctor runs the same test continuously but with a time budget, since an exact
+intersection is a full boolean. Anything it could not reach in time is reported as *not yet
+checked*, and this command runs it without the hurry.
+
+When nothing clashes, it tells you the closest approach instead.
+
+### Inspect imported mesh
+
+For a mesh that arrived with no feature tree. It measures rather than reconstructs:
+
+- **Holes**, with diameter, centre, axis, depth and roundness, matched against standard metric
+  clearance sizes. A hole drilled at an angle is found with its axis recovered from the geometry,
+  not assumed to be along Z.
+- **Flat faces**, with area, normal and position.
+- A **unit sanity check**: nothing in an STL states its units, so if the model is implausibly small
+  or large the dialog says what size it would be under each interpretation and leaves the decision
+  to you.
+
+**Roundness** is worth reading. A drilled hole is over 99%. Anything lower is a rounded pocket that
+is nearly circular, and the figure is shown so you can tell them apart.
+
+Press **Make a cut** on a hole and it becomes a real parametric cylinder at exactly the measured
+position and diameter, subtracted from the mesh. The mesh stays opaque; the hole is now a feature
+you can move, resize and drive from a parameter.
+
+### Configurations
+
+A configuration is a named set of parameter values inside this document. One feature tree, many
+sizes.
+
+Add one, switch to it, change a parameter: the change is recorded against that variant and nothing
+else. **Only the parameters a variant overrides are stored**, so a change to the shared design
+reaches every variant instead of needing to be applied to each.
+
+`Analyse → Export the family table` writes one CSV row per configuration, which is what a parts
+catalogue wants.
+
+### Versions  `Ctrl`+`Shift`+`S`
+
+Snapshots, branches and a real diff, all in this browser. No account, no server, no check-in.
+
+The diff is the part worth having. Not "the file changed" but `plate_w 140 → 180`,
+`added Bolt hole`, `Bolt pattern count 4 → 6`. Features are matched by id first and by name second,
+so renaming one reads as a rename rather than a delete plus an add.
+
+**Branches** are for trying something without risking what works. A branch starts from where you
+are, and the trunk is untouched by anything you save on it.
+
+Storage is finite: versions are whole documents, and when the browser's allowance runs out the
+oldest are dropped and you are told how many. If a version matters, save the `.tcad` file too.
+
+### Export quality
+
+Segment counts are set per feature while modelling, when what matters on export is the tolerance of
+the thing being exported. So export has its own setting, stated as a **chord tolerance**: no point
+on the exported mesh is further than that from the surface it represents.
+
+| Quality | Tolerance | For |
+|---|---|---|
+| Draft | 0.25 mm | A quick look, a small file |
+| Standard | 0.05 mm | Most 3D printing and visualisation |
+| Fine | 0.01 mm | Close-range rendering, machining setup |
+| As modelled | — | Whatever the features already carry |
+
+One tolerance gives a 3mm bolt hole and a 200mm flange each exactly the segments they need, which is
+the fix for meshes that arrive with a thousand triangles on a flat face and a visibly faceted
+cylinder beside it. The dialog shows the before and after per feature. It applies to export only:
+the document you are editing keeps its own counts.
 
 ---
 

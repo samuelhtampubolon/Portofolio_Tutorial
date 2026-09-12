@@ -102,7 +102,13 @@ export function modal({ title, subtitle, body, actions = [], wide = false, size 
   back.addEventListener('pointerdown', (e) => { if (e.target === back) closeModal(); });
   $('#modalRoot').appendChild(back);
   openModal = { back, onClose };
-  (box.querySelector('input, select, textarea, button.primary') || box).focus?.();
+  // preventScroll matters: focusing an element scrolls it into view, and in a
+  // dialog whose first field sits below a drawing or a long banner that
+  // silently scrolls the top of the content off screen. The user should always
+  // see a dialog from its beginning.
+  const first = box.querySelector('input, select, textarea, button.primary') || box;
+  first.focus?.({ preventScroll: true });
+  bodyNode.scrollTop = 0;
   return bodyNode;
 }
 

@@ -45,6 +45,7 @@ export const DEFAULT_STANDARDS = {
   materialPrice: {},    // material -> price per kg
 
   /* housekeeping */
+  exportQuality: 'standard',
   autoDoctor: true,
   seedNewDocuments: true,
 };

@@ -7,7 +7,7 @@ No installation, no account, no server. Your model never leaves your machine.
 ![MIT licence](https://img.shields.io/badge/licence-MIT-3da639)
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
-![177 commands](https://img.shields.io/badge/commands-177-8957e5)
+![188 commands](https://img.shields.io/badge/commands-188-8957e5)
 ![58 tests](https://img.shields.io/badge/tests-58%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
@@ -45,12 +45,12 @@ it CAD rather than a 3D drawing program.
 
 ## The interface
 
-177 commands, reachable five ways — and every one of them is generated from a single registry,
+188 commands, reachable five ways — and every one of them is generated from a single registry,
 so nothing can drift out of sync:
 
 | Surface | What it gives you |
 |---|---|
-| **Menu bar** | 12 menus — File, Edit, Create, Modify, View, Measure, Draft, Simulate, Export, Window, Studio, Help — with submenus, live checkmarks and shortcut hints |
+| **Menu bar** | 13 menus — File, Edit, Create, Modify, View, Measure, Draft, Simulate, Export, Window, Studio, Analyse, Help — with submenus, live checkmarks and shortcut hints |
 | **Ribbon** | A contextual toolbar that changes per workspace, grouped and labelled, with commands greying out when they don't apply |
 | **Command palette** | `Ctrl K` — ranked fuzzy search over everything, with your recent commands first |
 | **Quick menu** | `Q` — eight numbered favourites at the cursor, different per workspace |
@@ -129,6 +129,72 @@ It also carries **`design-intent.json`**: the parameters, the feature history, t
 relationships and the material, in plain JSON beside the mesh. An STL is geometry with the
 reasoning stripped out; this is the reasoning, written down next to it.
 
+### Analyse: the numbers, computed rather than estimated
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/analyse-section.png" alt="Section properties of a channel, drawn with its principal axes"></td>
+<td width="50%"><img src="docs/images/analyse-diff.png" alt="A structural diff between two saved versions"></td>
+</tr>
+</table>
+
+**Section properties.** "Is this strut strong enough?" is the question designers keep leaving the
+application to answer, and the usual response — bolt on FEA — is both enormous and, for the shapes
+most parts actually are, unnecessary. A beam in bending is governed by the second moment of area of
+its cross-section, and that is not an estimate: it is an exact property of the geometry.
+
+So TesserCAD slices the body, recovers the true cross-section, draws it to scale with its principal
+axes, and computes what a structures textbook would: area, Iₓₓ / I_yy / Iₓᵧ, principal moments,
+section moduli, radii of gyration. Give it a load case and it reports the bending stress and the
+utilisation against yield. Hollow sections need no special handling: an interior loop runs the other
+way, so it subtracts itself.
+
+It is checked against closed form — a rectangle to the last decimal, a tube to 0.04% — and it says
+in the dialog, every time, that it is not FEA.
+
+**Clash detection that is actually exact.** The first version compared bounding boxes, which is fast
+and wrong: a diagonal strut reports a clash it does not have. The boolean engine the modelling
+features already use will happily intersect two bodies and hand back the solid they share, so now
+the answer is a measured volume and its centroid, not a suspicion. Boxes remain the broad phase,
+and continuous checking gets a time budget so editing stays responsive.
+
+**Reading an imported mesh.** A supplier's STL is eighty thousand triangles with no feature tree,
+and the job is to move one hole. Reconstructing the modelling operations is a research problem;
+*measuring* is not. Triangles are grouped into patches across edges that are not creases, so a
+tessellated cylinder is one patch rather than 48 facets. A patch whose normals agree is a plane; a
+patch whose normals are all perpendicular to a common direction is a cylinder, and that direction
+is recovered as the smallest eigenvector of the normal covariance — so **a hole drilled at 30° is
+found with its axis to within 0.000°**, not just one down Z. Inward-facing means a hole, outward
+means a boss, and roundness is reported rather than hidden.
+
+Then the payoff: press a button and the measured hole becomes a real parametric cut at exactly its
+position and diameter, which you can move, resize and drive from a parameter.
+
+An earlier version of this fitted circles to boundary loops, and a test caught it claiming the
+rectangular side facets of a cylinder wall were holes. They were: a rectangle's four corners really
+are equidistant from its centre.
+
+### Configurations, version control and export that respects tolerance
+
+**Configurations** put every size of a part in one file. A configuration stores only the parameters
+it overrides, so a change to the shared design reaches all six variants instead of being applied six
+times — and switching writes into `doc.params`, which means the expression engine, the inspector,
+the Doctor and the cost model need no knowledge of configurations at all.
+
+**Local version control.** The software world settled this thirty years ago and CAD never got the
+benefit; the options are a filename convention or a vendor's server that wants a check-in to rotate
+a bolt. Neither is necessary, because a TesserCAD document is plain JSON at every instant. So there
+are snapshots, branches and a **real structural diff** — not "the file changed" but
+`plate_w 140 → 180, added Bolt hole, count 4 → 6`. Features are matched by id first and by name
+second, so a rename reads as a rename rather than a delete plus an add.
+
+**Export at a stated tolerance.** Segment counts are set per feature at modelling time, when what
+matters on export is the tolerance of the thing being exported. So export has its own policy in the
+language engineers already use: chord tolerance. "No point on this mesh is more than 0.05mm from the
+surface it represents." A 3mm bolt hole and a 200mm flange each get exactly the segments they need
+and no more — and the tolerance is written into the release package, because a mesh without its
+tolerance is a number without a unit.
+
 ### Memory, automation and a tutor that explains why
 
 - **Studio standards** are the settings you should only have to give once: units, material,
@@ -161,7 +227,7 @@ and 27px controls are not a mobile interface:
 - **Bottom navigation** — the three workspaces, Panels and More, all in thumb reach.
 - **Bottom sheets** host the *same* panel DOM as the desktop side panels, so nothing is a
   second-class copy. Drag the handle to resize between half and full height, or fling it away.
-- **Every one of the 12 menus** is reachable from the More sheet, as accordions over 200-odd
+- **Every one of the 13 menus** is reachable from the More sheet, as accordions over 200-odd
   leaf commands, with a search row that opens the palette.
 - **Long-press replaces right-click** in the viewport, the drawing and the feature tree.
 - **Two-finger pan and pinch-zoom** in the Draft workspace, which has no wheel or middle button
@@ -361,6 +427,12 @@ src/
   io/io.js            import, export, project save/load
   intel/
     process.js        manufacturing processes: limits, envelopes, rates
+    section.js        exact cross-section properties, and stress from them
+    interfere.js      exact clash detection, broad phase then boolean
+    recognise.js      surface segmentation: planes, cylinders, holes
+    configs.js        size variants sharing one feature tree
+    history.js        local version control, branches and a structural diff
+    tessellate.js     chord-tolerance export and mesh cleanup
     doctor.js         continuous validation and intent-preserving repairs
     cost.js           process comparison, crossover quantities, cost drivers
     brief.js          requirements to a sized parametric feature tree

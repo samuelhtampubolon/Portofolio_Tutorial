@@ -26,6 +26,7 @@ import { massProperties } from '../core/rebuild.js';
 import { TRI_BUDGET } from '../core/csg.js';
 import { processOf, processSuits, PROCESSES } from './process.js';
 import { limits } from './standards.js';
+import { findClashes } from './interfere.js';
 
 /** Ranked worst-first. `block` findings should stop a release. */
 export const SEVERITY = { block: 3, warn: 2, note: 1 };
@@ -46,7 +47,11 @@ function bodiesOf(doc, build) {
     for (let i = 0; i < r.instances.length; i++) {
       const inst = r.instances[i];
       const mp = massProperties(inst.geometry, inst.matrix);
-      out.push({ feature: f, index: i, instances: r.instances.length, ...mp });
+      out.push({
+        feature: f, index: i, instances: r.instances.length,
+        geometry: inst.geometry, matrix: inst.matrix,
+        ...mp,
+      });
     }
   }
   return out;
@@ -200,34 +205,55 @@ check('material-process', (ctx, add) => {
 
 check('interference', (ctx, add) => {
   const b = ctx.bodies;
-  if (b.length < 2 || b.length > 60) return;   // O(n²); skip on very large assemblies
+  if (b.length < 2 || b.length > 60) return;
+  // Bounding boxes are the broad phase only. What gets reported is the real
+  // shared solid, computed by the same boolean engine the model itself uses,
+  // so the number is a volume rather than a suspicion.
+  // A tight budget: this runs after every rebuild, and an exact intersection is
+  // a full BSP boolean. Whatever does not fit the budget is reported as not yet
+  // checked, and the Clash check command runs the same test without the hurry.
+  const { clashes, skipped, unchecked } = findClashes(b, { budgetMs: 90, maxPairs: 40 });
   const seen = new Set();
-  for (let i = 0; i < b.length; i++) {
-    for (let j = i + 1; j < b.length; j++) {
-      if (b[i].feature.id === b[j].feature.id) continue;   // instances of one pattern
-      if (!b[i].box.intersectsBox(b[j].box)) continue;
-      const o = b[i].box.clone().intersect(b[j].box);
-      const s = new THREE.Vector3(); o.getSize(s);
-      const vol = s.x * s.y * s.z;
-      if (vol < 1e-3) continue;
-      const key = [b[i].feature.id, b[j].feature.id].sort().join('|');
-      if (seen.has(key)) continue;
-      seen.add(key);
+  for (const c of clashes) {
+    const key = [c.a.feature.id, c.b.feature.id].sort().join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    if (!c.exact) {
       add({
         severity: SEVERITY.note,
-        featureId: b[i].feature.id,
-        title: `${b[i].feature.name} and ${b[j].feature.name} may intersect`,
-        detail: `Their bounding boxes overlap by ${fmt(s.x)} × ${fmt(s.y)} × ${fmt(s.z)}mm.`,
-        why: 'Two solids occupying the same space is either an assembly clash or a missing boolean. This compares bounding boxes, not the solids themselves, so a diagonal part will report an overlap it does not have — the check is here to make you look.',
-        fix: {
-          label: 'Union them into one body',
-          apply: (store, makeFeature) => store.edit('Union overlapping bodies', (d) => {
-            const f = makeFeature('boolean', { name: 'Union', params: { op: 'union' }, inputs: [b[i].feature.id, b[j].feature.id] });
-            d.features.push(f);
-          }),
-        },
+        featureId: c.a.feature.id,
+        title: `${c.a.feature.name} and ${c.b.feature.name} were not checked for clash`,
+        detail: 'The pair carries too many triangles to intersect within the boolean budget.',
+        why: 'Their bounding boxes overlap, which is a necessary condition for a clash but not a sufficient one. Reduce the segment counts on either body and this becomes a real answer rather than a maybe.',
       });
+      continue;
     }
+
+    add({
+      severity: c.fraction > 0.02 ? SEVERITY.warn : SEVERITY.note,
+      featureId: c.a.feature.id,
+      title: `${c.a.feature.name} and ${c.b.feature.name} share ${fmt(c.volume)} mm³`,
+      detail: `They genuinely intersect, centred at ${fmt(c.at.x)}, ${fmt(c.at.y)}, ${fmt(c.at.z)}` +
+        (c.fraction > 0 ? ` — ${(c.fraction * 100).toFixed(1)}% of the smaller body.` : '.'),
+      why: 'Two solids occupying the same space is either an assembly clash or a boolean that was never applied. This is the measured intersection volume, not a bounding-box guess, so it is a real overlap.',
+      fix: {
+        label: 'Union them into one body',
+        apply: (store, makeFeature) => store.edit('Union overlapping bodies', (d) => {
+          d.features.push(makeFeature('boolean', {
+            name: 'Union', params: { op: 'union' }, inputs: [c.a.feature.id, c.b.feature.id],
+          }));
+        }),
+      },
+    });
+  }
+  if (skipped + unchecked > 0) {
+    add({
+      severity: SEVERITY.note,
+      title: `${skipped + unchecked} body pairs are not yet clash-checked`,
+      detail: 'Continuous checking gives interference a fixed time budget so that editing stays responsive.',
+      why: 'The boxes of these pairs overlap, which is a necessary condition for a clash but not a sufficient one. Analyse → Clash check runs the exact test on all of them without the hurry.',
+    });
   }
 });
 

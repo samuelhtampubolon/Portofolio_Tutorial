@@ -361,6 +361,14 @@ export function migrate(doc) {
   d.view = { ...v, ...(d.view || {}) };
   d.view.clip = { ...v.clip, ...(d.view.clip || {}) };
 
+  // Configurations arrived after the first schema, so a document without them
+  // is normal rather than broken: give it the single default variant.
+  if (!d.configs || !Array.isArray(d.configs.list) || !d.configs.list.length) {
+    d.configs = { active: 'default', list: [{ id: 'default', name: 'Default', overrides: {}, note: 'The design as drawn.' }] };
+  }
+  if (!d.configs.list.some(c => c.id === d.configs.active)) d.configs.active = d.configs.list[0].id;
+  d.studio = d.studio && typeof d.studio === 'object' ? d.studio : {};
+
   // Normalise every feature against the current catalogue.
   d.features = d.features.filter(f => f && f.id && CATALOG[f.type]).map(f => {
     const base = makeFeature(f.type);
