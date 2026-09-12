@@ -13,7 +13,8 @@ import {
   store, newDocument, makeFeature, makeLayer, catalogOf, CATALOG, MATERIALS, UNITS,
   saveLocal, loadLocal, clearLocal, APP_NAME, APP_VERSION, FILE_EXT, toDisplay, uid,
 } from './core/doc.js';
-import { rebuild, invalidateCache, massProperties } from './core/rebuild.js';
+import { rebuild, rebuildAsync, invalidateCache, massProperties } from './core/rebuild.js';
+import { pool as csgPool } from './core/csg-pool.js';
 import { evalSafe, EXPR_HELP } from './core/expr.js';
 import { Viewport } from './view/viewport.js';
 import { Draft2D, DRAW_TOOLS, fmt, rotateEntity, scaleEntity, mirrorEntity, entityBBox } from './draft/draft.js';
@@ -139,12 +140,15 @@ class App {
 
     this.restoreSession();
     this.setWorkspace('model');
-    this.rebuildNow();
     this.draft.start();
     this.draft.resize();
     this.renderLearn();
-    // Frame after the chrome has laid out, so the camera sees the real canvas.
-    requestAnimationFrame(() => requestAnimationFrame(() => this.vp.frameAll()));
+    // The first rebuild is awaited before framing: it is asynchronous now, and
+    // a camera framed before the first body exists frames nothing. Two frames
+    // after it, so the chrome has laid out and the canvas is its real size.
+    this.rebuildNow().then(() => {
+      requestAnimationFrame(() => requestAnimationFrame(() => this.vp.frameAll()));
+    });
 
     this._autosave = setInterval(() => { if (store.dirty) { saveLocal(); this.markSaved(); } }, Math.max(5, this.prefs.autosaveSec) * 1000);
     addEventListener('beforeunload', (e) => {
@@ -319,10 +323,37 @@ class App {
     this._rebuildTimer = setTimeout(() => this.rebuildNow(), 8);
   }
 
-  rebuildNow() {
+  /**
+   * Rebuild, with the booleans off this thread.
+   *
+   * The rebuild is asynchronous because the expensive part of it now runs in
+   * worker threads, which is the difference between a window that keeps
+   * responding during a heavy boolean and one that does not. Two consequences
+   * are handled here rather than pushed onto callers:
+   *
+   * A rebuild can be superseded while it is in flight. Every run takes a
+   * ticket, and a run that finds a newer ticket on completion drops its own
+   * result instead of drawing a model the user has already edited past.
+   *
+   * Everything after the await is the same work in the same order as before,
+   * so nothing downstream has to know the rebuild ever yielded.
+   */
+  async rebuildNow() {
+    const ticket = (this._buildTicket = (this._buildTicket || 0) + 1);
     const t0 = performance.now();
-    try { this.build = rebuild(store.doc); }
-    catch (err) { console.error(err); this.flash(`Rebuild failed: ${err.message}`, 'err', 6000); return; }
+    let build;
+    try {
+      build = await rebuildAsync(store.doc);
+    } catch (err) {
+      console.error(err);
+      if (ticket === this._buildTicket) this.flash(`Rebuild failed: ${err.message}`, 'err', 6000);
+      return;
+    }
+    // A newer edit started its own rebuild while this one was running. That
+    // one is the truth; this result is already stale, so it is discarded.
+    if (ticket !== this._buildTicket) return;
+
+    this.build = build;
     this.buildMs = performance.now() - t0;
     this.vp.syncBodies(this.build);
     this.sim.refreshPivots();
