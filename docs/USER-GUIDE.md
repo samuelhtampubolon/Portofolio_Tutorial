@@ -701,6 +701,169 @@ the document you are editing keeps its own counts.
 
 ---
 
+## 5.7 Drawings, tolerance and text
+
+Everything in this section is in the **Studio** and **Analyse** menus, and all of it is reachable
+from the command palette with `Ctrl`+`K`.
+
+### Shop drawing  `Ctrl`+`Shift`+`D`
+
+Projects the model onto a real paper size as an orthographic drawing: views, dimensions, hole
+callouts, centre marks and a filled title block.
+
+| Control | What it does |
+|---|---|
+| Paper | A4, A3 or A2 landscape. The scale is chosen from the standard series so every view fits its cell. |
+| Views | Front, top, right and an isometric. Turn off what you do not need and the rest are re-laid out. |
+| Projection | First angle (ISO) or third angle (ASME). This moves the views *and* changes the symbol, so the two can never disagree. |
+| Remove hidden lines | On, edges behind material are dashed. Off draws every edge, which is faster and sometimes clearer on a simple part. |
+
+**Save SVG** writes a print-ready sheet. **Save DXF** writes the same drawing on five layers, so
+visible, hidden, centre, dimension and text lines arrive separately in CAM or another CAD package.
+
+What it gives you is a starting drawing rather than a finished one: overall extents per view, and a
+diameter callout with the nearest standard size for each recognised hole. Datums, geometric
+tolerance and anything a functional surface needs are still yours to add. If a drawing takes more
+than a second or two, turn off the isometric view: it is the one that cannot share hidden-line work
+with the others.
+
+### Tolerance stack-up
+
+A stack is a chain of dimensions and a requirement they have to add up to. The dialog seeds one from
+the model along the X axis; delete what is not in the chain and add what is missing.
+
+Per link: a **direction** (`+` adds to the gap, `−` subtracts from it, so a shaft length and a bore
+depth can be in one chain), a **nominal**, a **tolerance**, and a **distribution**.
+
+| Distribution | Use it for |
+|---|---|
+| Normal (±3σ) | A centred process held inside its band. The usual assumption. |
+| Capable (±6σ) | A process you have capability data for. |
+| Triangular | Some central tendency, no data to back it. |
+| Uniform | No central tendency at all: a sorted bin, a shim, a clearance. |
+
+The **lock** marks a dimension you cannot change, such as a bought-in bearing, so the advice never
+suggests tightening it. The bar shows each link's share of the total variance.
+
+Three answers appear together, because they disagree and the disagreement is the useful part:
+
+- **Worst case** is what a drawing promises, and assumes every part is at its worst limit at once.
+- **Root sum square** is what a run of parts actually does, if the processes are centred and independent.
+- **Monte Carlo** samples 20,000 assemblies and shows where the failures actually land.
+
+Below them, **Cp and Cpk**. Cp asks whether the chain is tight enough; Cpk asks whether it is also
+aimed at the middle. A high Cp with a low Cpk is a good process pointed at the wrong number, which
+is a different fix from a bad process, and the dialog says which.
+
+Then **what to change**, priced, with each option as a button that applies it:
+
+- Scale every open tolerance by one factor. Simple, and usually the most expensive.
+- Tighten one link. One tighter operation instead of five, which is what a shop would quote.
+- Re-centre, when the chain is tight enough but aimed off target. Moving a nominal is free.
+- Allocate from the requirement backwards, sizing every band at once.
+
+If the nominals themselves sum to a number outside the requirement, it says so and stops: no
+tolerance is small enough to reach a number the dimensions never add up to, and that is a design
+change. Stacks are stored in the document, so they travel with the design.
+
+### Fits and limits
+
+ISO 286 hole-basis fits resolved at a real size, in millimetres rather than micrometres of
+deviation. Type a nominal, or select a body with a recognised hole and the dialog opens at its
+diameter.
+
+| Fit | For |
+|---|---|
+| H11/c11 | Loose running: dirt, paint, heat. Nothing has to locate. |
+| H9/d9 | Free running: rotating at speed with generous lubrication. |
+| H8/f7 | Close running: the default plain-bearing fit. |
+| H7/g6 | Sliding: moves by hand, locates accurately. |
+| H7/h6 | Locational clearance: assembles by hand and stays put. The safe default. |
+| H7/k6 | Locational transition: light tap to assemble. |
+| H7/n6 | Locational interference: press to assemble, still separable. |
+| H7/p6 | Press fit: torque through the joint only with a key. |
+| H7/s6 | Driving fit: permanent. |
+
+The hole is the H member because a reamer or a drill is a fixed size and a shaft can be turned to
+anything. Values are the published tables, not interpolations.
+
+### Compare with a mesh
+
+Answers "is this my part?" for an incoming STL, a scan or a re-export from another package. It
+measures the exact distance from every sampled point on the mesh to the nearest surface of the
+model, signed: positive is outside the model, negative is a gouge.
+
+Read the histogram for the *kind* of difference. A symmetric spread around zero is tessellation.
+One tall bar off centre is a mis-sized feature. Two separated humps usually mean a fillet or a
+chamfer present in one and not the other. Before any of that, check the two lines above it: if the
+**size ratio** is near 25.4 the file is in inches, and if the **position offset** is not near zero
+the two are not registered and nothing else in the report means much yet. The dialog names both
+cases outright rather than reporting them as shape differences.
+
+### Design as code  `Ctrl`+`Shift`+`C`
+
+The document as editable text. Not an export: the text is generated from the live document, and
+applying it rewrites that document.
+
+```
+part "Mounting plate"
+units mm
+
+param plate_w = 120
+param thick = 8
+param bolt = 6.6      # M6 clearance
+
+feature box "Plate"
+  w = plate_w
+  d = 80
+  h = thick
+  material = aluminium
+
+feature cylinder "Bolt hole"
+  r = bolt / 2
+  h = thick * 2
+  pos = plate_w / 2 - 12, 34, 0
+```
+
+One fact per line, two spaces of indent inside a feature. `#` followed by a space starts a comment;
+`#` followed by anything else is a feature id, which is why ids are written `#f3` and comments
+`# note`. Expressions go in verbatim and are checked against the parameters you declared, so a
+mistyped name is reported with its line number instead of failing quietly at rebuild.
+
+**What this would do** shows the effect before anything happens: which features would be added,
+removed or changed, and a line diff. **Apply** is refused outright while there is a syntax error,
+and the dialog stays open with the line numbers so the typo can be fixed. A successful apply is one
+undo step.
+
+Imported mesh payloads are the one thing the text cannot carry. They stay attached to the document
+and are reattached when the text is applied, and the dialog says which features that affects.
+
+### Merge a branch
+
+Brings another branch's work into the document that is open now. It needs a version both branches
+share; if there is none, it says so rather than guessing, because a three-way merge without a common
+ancestor is not a merge.
+
+Most of the time nothing is asked of you: two people who changed different parameters, or different
+features, get both changes. What does get asked:
+
+- **The same parameter changed on both branches.** Both values are offered. Nothing is averaged, because two numbers a person chose deliberately are a question, not a calculation.
+- **A feature deleted on one branch and edited on the other.** Also a question, rather than a silent drop.
+- **The same features put in a different order.** Order changes the part, so this one cannot be answered automatically.
+
+Unanswered conflicts fall back to whichever side you pick at the bottom, and the whole merge is one
+undo step, so it is safe to merge and look.
+
+Colours, opacity and the viewport never block a merge. They are not design intent.
+
+### Import design intent
+
+Reads a design-intent JSON file back into a live parametric document, which is the half of
+interoperability that usually goes missing. The dialog reports what survived the trip before you
+open it, and opening it replaces the document you have, so save first.
+
+---
+
 ## 6. Keyboard reference
 
 ### Everywhere
@@ -708,6 +871,8 @@ the document you are editing keeps its own counts.
 | | |
 |---|---|
 | `Ctrl`+`K` | command palette |
+| `Ctrl`+`Shift`+`D` | shop drawing |
+| `Ctrl`+`Shift`+`C` | design as code |
 | `Q` | quick menu |
 | `Ctrl`+`S` / `Ctrl`+`⇧`+`S` | save / save as |
 | `Ctrl`+`O` / `Ctrl`+`N` / `Ctrl`+`I` | open / new / import |

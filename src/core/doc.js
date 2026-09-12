@@ -325,6 +325,7 @@ export function newDocument(name = 'Untitled') {
     features: [],
     draw: emptyDraw(),
     sim: emptySim(),
+    stacks: [],
     view: {
       grid: true,
       axes: true,
@@ -368,6 +369,9 @@ export function migrate(doc) {
   }
   if (!d.configs.list.some(c => c.id === d.configs.active)) d.configs.active = d.configs.list[0].id;
   d.studio = d.studio && typeof d.studio === 'object' ? d.studio : {};
+  // Tolerance chains are part of the design, not a session preference, so they
+  // live in the document and travel with it.
+  if (!Array.isArray(d.stacks)) d.stacks = [];
 
   // Normalise every feature against the current catalogue.
   d.features = d.features.filter(f => f && f.id && CATALOG[f.type]).map(f => {

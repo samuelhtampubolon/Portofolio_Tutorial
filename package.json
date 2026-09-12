@@ -7,8 +7,18 @@
   "license": "MIT",
   "scripts": {
     "setup": "node tools/setup-dev.mjs",
-    "test": "node tools/setup-dev.mjs && node tools/test.mjs",
-    "serve": "python3 -m http.server 8080"
+    "test": "node tools/setup-dev.mjs && node tools/run-tests.mjs",
+    "serve": "python3 -m http.server 8080",
+    "test:core": "node tools/setup-dev.mjs && node tools/test.mjs"
   },
-  "keywords": ["cad", "3d", "parametric", "csg", "dxf", "simulation", "webgl", "threejs"]
+  "keywords": [
+    "cad",
+    "3d",
+    "parametric",
+    "csg",
+    "dxf",
+    "simulation",
+    "webgl",
+    "threejs"
+  ]
 }

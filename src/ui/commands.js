@@ -23,6 +23,9 @@ export function buildCommands(app) {
   const in3d = () => app.workspace !== 'draft';
   const hasDraftSel = () => app.draft.selection.size > 0;
   const view = () => store.doc.view;
+  // Branch count comes from the app rather than from the version store, so the
+  // registry stays free of storage imports.
+  const VCSBranchCount = () => app.branchCount?.() ?? 1;
 
   /* ==================================================== File */
 
@@ -302,6 +305,56 @@ export function buildCommands(app) {
 
   add('export.quality', 'Export quality…', 'settings', 'Export', () => app.showExportQuality(), {
     keywords: 'tolerance tessellation triangles chord resolution mesh density',
+  });
+
+  /* ------------------------------------------------------- shop drawings */
+
+  add('draw.sheet', 'Shop drawing…', 'sheet', 'Drawing', () => app.showDrawing(), {
+    key: 'Ctrl ⇧ D', enabled: built,
+    keywords: 'orthographic views print title block dimension hidden line first angle blueprint plan elevation',
+  });
+  add('draw.sheetSVG', 'Drawing to SVG', 'image', 'Drawing', () => app.exportSheet('svg'), {
+    enabled: built, keywords: 'print plot paper a3 a4 vector',
+  });
+  add('draw.sheetDXF', 'Drawing to DXF', 'layers', 'Drawing', () => app.exportSheet('dxf'), {
+    enabled: built, keywords: 'autocad cam laser plotter r12',
+  });
+
+  /* ---------------------------------------------------------- tolerances */
+
+  add('tol.stack', 'Tolerance stack-up…', 'ruler', 'Analyse', () => app.showTolerance(), {
+    enabled: built,
+    keywords: 'stack chain worst case rss monte carlo cpk capability variation assembly gap fit',
+  });
+  add('tol.fits', 'Fits and limits…', 'target', 'Analyse', () => app.showFits(), {
+    keywords: 'iso 286 h7 g6 shaft hole clearance interference press slide bearing tolerance grade',
+  });
+
+  /* --------------------------------------------------------- verification */
+
+  add('dev.compare', 'Compare with a mesh…', 'deviation', 'Analyse', () => app.showDeviation(), {
+    enabled: () => built() && store.doc.features.some(f => f.type === 'mesh'),
+    keywords: 'deviation map scan supplier stl verify same part units inspect difference',
+  });
+  add('studio.intentIn', 'Import design intent…', 'file-import', 'Studio', () => app.pickIntent(), {
+    keywords: 'round trip json parameters rebuild interoperability read back',
+  });
+
+  /* ------------------------------------------------------ design as code */
+
+  add('spec.edit', 'Design as code…', 'code', 'Studio', () => app.showSpec(), {
+    key: 'Ctrl ⇧ C',
+    keywords: 'text script source edit parametric openscad diff review programmatic',
+  });
+  add('spec.copy', 'Copy the spec text', 'copy', 'Studio', () => app.copySpec(), {
+    keywords: 'clipboard share paste review text',
+  });
+
+  /* ---------------------------------------------------------- merge */
+
+  add('vcs.merge', 'Merge a branch…', 'merge', 'Versions', () => app.showMerge(), {
+    enabled: () => VCSBranchCount() > 1,
+    keywords: 'three way conflict combine branch bring in resolve',
   });
 
   return C;
