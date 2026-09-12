@@ -349,7 +349,7 @@ export class MobileShell {
 
     wrap.appendChild(el('button', {
       class: 'sheet-search', onclick: () => { this.closeSheet(); app.openPalette(); },
-    }, [icon('search', { size: 17 }), el('span', { text: 'Search all 167 commands…' }), el('kbd', { text: '⌘K' })]));
+    }, [icon('search', { size: 17 }), el('span', { text: `Search all ${app.commands.length} commands…` }), el('kbd', { text: '⌘K' })]));
 
     const quick = ['edit.undo', 'edit.redo', 'file.save', 'file.template', 'edit.prefs', 'help.quickstart'];
     wrap.appendChild(el('div', { class: 'sheet-quick' }, quick.map(id => {

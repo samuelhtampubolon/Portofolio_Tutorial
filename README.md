@@ -7,7 +7,7 @@ No installation, no account, no server. Your model never leaves your machine.
 ![MIT licence](https://img.shields.io/badge/licence-MIT-3da639)
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
-![167 commands](https://img.shields.io/badge/commands-167-8957e5)
+![177 commands](https://img.shields.io/badge/commands-177-8957e5)
 ![58 tests](https://img.shields.io/badge/tests-58%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
@@ -45,12 +45,12 @@ it CAD rather than a 3D drawing program.
 
 ## The interface
 
-167 commands, reachable five ways — and every one of them is generated from a single registry,
+177 commands, reachable five ways — and every one of them is generated from a single registry,
 so nothing can drift out of sync:
 
 | Surface | What it gives you |
 |---|---|
-| **Menu bar** | 11 menus — File, Edit, Create, Modify, View, Measure, Draft, Simulate, Export, Window, Help — with submenus, live checkmarks and shortcut hints |
+| **Menu bar** | 12 menus — File, Edit, Create, Modify, View, Measure, Draft, Simulate, Export, Window, Studio, Help — with submenus, live checkmarks and shortcut hints |
 | **Ribbon** | A contextual toolbar that changes per workspace, grouped and labelled, with commands greying out when they don't apply |
 | **Command palette** | `Ctrl K` — ranked fuzzy search over everything, with your recent commands first |
 | **Quick menu** | `Q` — eight numbered favourites at the cursor, different per workspace |
@@ -59,6 +59,91 @@ so nothing can drift out of sync:
 Plus a **preferences dialog**, an **undo-history browser** you can jump around in, six **starter
 templates** that are all real parametric models, and an optional **learning card** that tracks
 the eight things worth trying first.
+
+## Studio: the part that thinks about the design with you
+
+<table>
+<tr>
+<td width="33%"><img src="docs/images/studio-doctor.png" alt="The Design Doctor in the properties panel"></td>
+<td width="33%"><img src="docs/images/studio-cost.png" alt="The cost estimate comparing processes"></td>
+<td width="33%"><img src="docs/images/studio-brief.png" alt="The design brief sizing a bracket from a load"></td>
+</tr>
+</table>
+
+Most of what CAD asks of you is not modelling. It is knowing whether the thing you drew can be
+made, what it will cost, what you decided last time, and assembling the eleven files somebody
+downstream actually needs. TesserCAD does that work in the app rather than leaving it to you:
+
+### The Design Doctor runs continuously, and repairs what it can
+
+Sixteen checks run after **every** rebuild, not when you remember to ask, and each finding
+carries three things a bare error message never does — what is wrong, why it matters, and where
+possible a one-click repair.
+
+- **Manufacturability against the process you actually named.** A 0.4mm wall is fine in moulded
+  ABS and impossible in sand casting, so the checks ask what you are making it by first. Walls,
+  minimum features, work envelope, material-process compatibility.
+- **Geometry that will fail downstream**: open shells that are not watertight, bodies that
+  intersect, a model that is 1000× too small because a unit got lost on import.
+- **Intent that has gone missing**: a parameter that drives nothing, a model that is all raw
+  numbers while carrying named parameters, two parts with the same name heading for one BOM row.
+- **Repairs that keep the intent.** A boolean whose inputs were deleted is not just reported;
+  the diagnosis says *why* it broke and offers to reconnect it, unsuppress the input that was
+  switched off, relink a lost profile, or clamp a runaway pattern count. Nothing is ever
+  repaired without you choosing it, and every repair is one undo.
+- Where a check is an honest proxy rather than an exact analysis — interference compares
+  bounding boxes, not solids — **the finding says so in its own text**, so you are never
+  misled about what has been verified.
+
+### Cost, not just manufacturability
+
+A part can be perfectly manufacturable and still be a bad part. The estimate compares every
+process that suits the material *and the shape*, and answers the question a per-part price
+cannot: **where the cheapest process changes as the quantity grows.**
+
+It knows that machining is billed on the block you start from — so a hollowed-out part gets
+*dearer* — and it tells you which single number is driving the price. These are
+order-of-magnitude figures from a generic rate model, and the interface says so everywhere it
+shows one; the value is the shape of the answer, which survives the rates being wrong by a
+factor of two.
+
+### Start from a requirement, not a rectangle
+
+**Design brief** takes what you actually know — a 300N load at 80mm, M6 fixings, aluminium —
+and sizes the part from first principles, then writes the sizing into the model *as
+expressions*, so `thick = sqrt(6 * load * arm / (width * allow))` and doubling the load moves
+the geometry. Five archetypes: L-bracket, bolted plate, shaft, pressure tube, enclosure.
+
+There is no language model and no server here, and the app does not pretend otherwise: this is
+closed-form engineering over a bounded catalogue, with every assumption listed and the caveat
+written into the document itself rather than into a dialog you dismiss once.
+
+### One command instead of eleven exports
+
+**Release design** runs the checks first — a blocking finding stops the release, because
+shipping is when an error costs the most — then packages STL, OBJ, DXF, SVG, a preview, the
+BOM, the cost basis, the editable source and a README into a single ZIP, written by hand so
+there is still no dependency.
+
+It also carries **`design-intent.json`**: the parameters, the feature history, the
+relationships and the material, in plain JSON beside the mesh. An STL is geometry with the
+reasoning stripped out; this is the reasoning, written down next to it.
+
+### Memory, automation and a tutor that explains why
+
+- **Studio standards** are the settings you should only have to give once: units, material,
+  your shop's real minimum wall, your rates. They seed new documents and are what the Doctor
+  measures against. Alongside them is a **decision log** — what was chosen and why — which
+  outlives any single file.
+- **Macros** record a run of commands and replay it as *one undo step*. No Python, no API: the
+  command registry means recording is just remembering which ids went past. Commands that open
+  a picker are refused at record time rather than stalling a replay.
+- **The why-tutor** takes over the learning card once the eight-step tour is done, and explains
+  the engineering reason behind whatever the model is currently doing — why boolean order
+  matters, why a lighter machined part costs more, what a safety factor is actually covering.
+  A live Doctor finding always outranks a general lesson, and a lesson never fires twice.
+
+Everything above stays in the browser. No account, no upload, no network call.
 
 ### On a phone
 
@@ -76,8 +161,8 @@ and 27px controls are not a mobile interface:
 - **Bottom navigation** — the three workspaces, Panels and More, all in thumb reach.
 - **Bottom sheets** host the *same* panel DOM as the desktop side panels, so nothing is a
   second-class copy. Drag the handle to resize between half and full height, or fling it away.
-- **Every one of the 11 menus** is reachable from the More sheet, as accordions over 192 leaf
-  commands, with a search row that opens the palette.
+- **Every one of the 12 menus** is reachable from the More sheet, as accordions over 200-odd
+  leaf commands, with a search row that opens the palette.
 - **Long-press replaces right-click** in the viewport, the drawing and the feature tree.
 - **Two-finger pan and pinch-zoom** in the Draft workspace, which has no wheel or middle button
   to fall back on. A drawing tool commits on lift, not on press, so the first finger of a
@@ -274,8 +359,18 @@ src/
     sim.js            the 4D engine: schedule, keyframes, dynamics, motors
     recorder.js       canvas → WebM video capture
   io/io.js            import, export, project save/load
+  intel/
+    process.js        manufacturing processes: limits, envelopes, rates
+    doctor.js         continuous validation and intent-preserving repairs
+    cost.js           process comparison, crossover quantities, cost drivers
+    brief.js          requirements to a sized parametric feature tree
+    release.js        the deliverable package, and the design-intent sidecar
+    zip.js            a stored-entry ZIP writer, ~120 lines, no dependency
+    macros.js         record and replay commands as one undoable step
+    standards.js      house standards, the decision log, macro storage
+    why.js            the contextual engineering tutor
   ui/
-    icons.js          145 inline SVG icons, one visual language, no icon font
+    icons.js          146 inline SVG icons, one visual language, no icon font
     shell.js          menus, palette, quick menu, modals, toasts, form controls
     mobile.js         the phone shell and the tablet floating cluster
     commands.js       the command registry and the starter templates

@@ -28,7 +28,7 @@ export function download(filename, data, mime = 'application/octet-stream') {
   bus.emit(T.TOAST, { msg: `Saved ${filename}`, kind: 'ok' });
 }
 
-function safeName(base, ext) {
+export function safeName(base, ext) {
   const n = String(base || 'model').trim().replace(/[^\w\-. ]+/g, '_').replace(/\s+/g, '-') || 'model';
   return n.toLowerCase().endsWith(ext) ? n : n + ext;
 }
@@ -67,7 +67,7 @@ export function collectMeshes(viewport) {
   return out;
 }
 
-function exportGroup(viewport) {
+export function exportGroup(viewport) {
   const root = new THREE.Group();
   for (const { mesh, feature } of collectMeshes(viewport)) {
     const g = mesh.geometry.clone();
@@ -148,7 +148,7 @@ export function exportPLY(viewport) {
 
 const round = (v) => Math.round(v * 10000) / 10000;
 
-function disposeRoot(root) {
+export function disposeRoot(root) {
   root.traverse(o => { if (o.isMesh) { o.geometry.dispose(); o.material.dispose(); } });
 }
 

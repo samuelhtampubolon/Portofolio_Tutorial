@@ -10,6 +10,7 @@ A walkthrough of the three workspaces, written so you can follow along in the ap
 - [3. Draft — 2D drawing](#3-draft--2d-drawing)
 - [4. Simulate — the fourth dimension](#4-simulate--the-fourth-dimension)
 - [5. Files and exchange](#5-files-and-exchange)
+- [5.5 Studio: checking, costing and shipping](#55-studio-checking-costing-and-shipping)
 - [6. Keyboard reference](#6-keyboard-reference)
 - [7. Worked examples](#7-worked-examples)
 
@@ -17,15 +18,15 @@ A walkthrough of the three workspaces, written so you can follow along in the ap
 
 ## 0. The interface
 
-**Menu bar.** Eleven menus across the top: File, Edit, Create, Modify, View, Measure, Draft,
-Simulate, Export, Window, Help. Submenus open on hover, toggles show a checkmark, and anything
+**Menu bar.** Twelve menus across the top: File, Edit, Create, Modify, View, Measure, Draft,
+Simulate, Export, Window, Studio, Help. Submenus open on hover, toggles show a checkmark, and anything
 that doesn't apply right now is greyed rather than hidden — so you can always see that it
 exists and work out why it is unavailable.
 
 **Ribbon.** The second row is a contextual toolbar that changes with the workspace, grouped and
 labelled (Create, Combine, Repeat, Transform…). It scrolls sideways when the window is narrow.
 
-**Command palette — `Ctrl K`.** Ranked fuzzy search over all 167 commands. Your recent commands
+**Command palette — `Ctrl K`.** Ranked fuzzy search over all 177 commands. Your recent commands
 appear first when the box is empty. This is the fastest way to reach anything you haven't
 memorised a shortcut for.
 
@@ -170,7 +171,7 @@ plain JSON.
 **Undo.** `Ctrl`+`Z` / `Ctrl`+`Shift`+`Z`, 120 steps deep, covering everything: geometry,
 drawing, parameters, animation and view settings.
 
-**Command palette.** `Ctrl`+`K` finds any of the 167 commands by fuzzy name. If you cannot
+**Command palette.** `Ctrl`+`K` finds any of the 177 commands by fuzzy name. If you cannot
 find a button, look here first.
 
 ### Navigating the 3D view
@@ -484,6 +485,108 @@ Drag a file onto the viewport, or use **File → Import**:
 - **DXF** merges into the drawing, matching layers by name. LINE, LWPOLYLINE, POLYLINE,
   CIRCLE, ARC, ELLIPSE, POINT, TEXT, MTEXT, SOLID and 3DFACE are understood.
 - **.tcad** replaces the current document.
+
+---
+
+## 5.5 Studio: checking, costing and shipping
+
+Everything in the **Studio** menu is about the work around the model rather than the model
+itself. None of it needs an account, a server or a network call.
+
+### The Design Doctor
+
+Sixteen checks run after every rebuild. Findings appear in the right panel, and the status bar
+carries the worst one so you can see the verdict without looking for it. `F8` opens the full
+report.
+
+The first control in the section is **Making it by**, and it matters more than it looks: every
+limit the Doctor measures against comes from the process you pick. A 0.4mm wall passes for
+injection-moulded ABS and fails for sand casting.
+
+Each finding has three parts: what is wrong, what it means for the part, and *why it matters*.
+Where a repair is unambiguous, there is a button for it — thicken the wall, reconnect a
+boolean whose inputs were deleted, unsuppress an input that was switched off, relink a lost
+profile. Repairs are never applied on their own, and each is a single undo.
+
+A few checks are honest proxies rather than exact analyses. Interference compares bounding
+boxes, not solids, so a diagonal part will report an overlap it does not have. The finding
+says so in its own text; it is there to make you look.
+
+### Cost estimate
+
+Compares every process that suits both the material and the shape, and shows how the answer
+changes with quantity — usually the only part of the estimate worth acting on. A part that is
+cheapest printed at ten is rarely cheapest printed at ten thousand.
+
+Read the **largest cost driver** line: if it says machine time and "97% of the stock block is
+cut away", the fix is a smaller bounding box, not a cheaper supplier.
+
+These are order-of-magnitude figures from a generic rate model. They will not match your
+quote. They will tell you which process to ask for one from.
+
+### Design brief
+
+`Studio → New from a design brief`. Pick an archetype, state what you know — the load, the
+span, the fixings, the material — and it sizes the part from first principles and shows the
+calculation before it builds anything.
+
+| Archetype | Sized by |
+|---|---|
+| L-bracket | Cantilever bending: `t = sqrt(6FL / bσ)` |
+| Bolted plate | Simply-supported strip at mid-span |
+| Shaft | Torsion of a round section, shear yield at 0.577 of tensile |
+| Pressure tube | Thin-wall hoop stress, `t = pD / 2σ` |
+| Enclosure | Walls at 1.5× the process minimum, cavity driven by the contents |
+
+The sizing is written into the model as expressions, not baked numbers, so the model is a
+description of the family rather than a drawing of one part: change `load` and the geometry
+follows. Every assumption lands in **Document → notes**, where it outlives the dialog.
+
+These are closed-form calculations on idealised sections. No stress concentrations, no fatigue,
+no buckling, no real boundary conditions. They are a starting point for analysis, not a
+replacement for it.
+
+### Release design
+
+`Ctrl`+`Shift`+`R`. Runs the checks, then builds one ZIP containing the mesh, the drawing, the
+BOM, the cost basis, a preview, the editable source, a README explaining all of it, and
+`design-intent.json`.
+
+A blocking finding stops the release. That is deliberate: shipping is the moment an error costs
+the most, so it is the moment to be least convenient about it. You can override it, and the
+override is labelled as one.
+
+**`design-intent.json`** is worth knowing about on its own (`Studio → Export design intent`).
+Mesh formats carry geometry with the reasoning stripped out. This carries the parameters with
+their resolved values, the feature history, which parameter drives which dimension, what
+consumes what, and the material — in plain JSON that anything can read. It is not STEP and does
+not claim to be; it is what STL throws away, written down beside it.
+
+### Macros
+
+`Studio → Record a macro`. Do the workflow once; press stop. Replaying it is a single undo step.
+
+Only commands from the registry are captured, so a drag in the viewport is not recorded, and
+commands that open a file picker are refused while recording rather than stalling the replay.
+If a macro uses commands that act on the selection, it says so, and you select something first.
+
+### Studio standards
+
+The settings you should only have to give once: units, default material, your shop's real
+minimum wall and tolerance, your rates, your batch size. They seed every new document and are
+what the Doctor measures against. They are never applied to a document that arrived from
+somebody else.
+
+The same dialog holds the **decision log** — what was chosen and why, written whenever you
+accept a repair or build from a brief — and exports the whole studio as one file to move
+between machines.
+
+### Engineering notes
+
+Once you have finished the eight-step tour, the card in the corner of the viewport becomes a
+tutor: it explains the engineering reason behind whatever the model is currently doing, one at
+a time, and never repeats one you have read. `Studio → Engineering notes` shows them all at
+once.
 
 ---
 

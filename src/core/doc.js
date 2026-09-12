@@ -400,7 +400,12 @@ class Store {
 
   /** Finish a begin()…commit() pair. `rebuild=false` skips geometry evaluation. */
   commit({ rebuild = true, silent = false } = {}) {
-    if (this._pending) {
+    if (this._batch) {
+      // Inside a batch, each commit is one step of a larger action rather than
+      // an action in its own right, so its snapshot is dropped: the batch
+      // pushes a single entry when it finishes.
+      this._pending = null;
+    } else if (this._pending) {
       this.undoStack.push({ label: this._label, doc: this._pending });
       if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
       this.redoStack.length = 0;
@@ -417,6 +422,28 @@ class Store {
     try { fn(this.doc); }
     catch (e) { this._pending = null; throw e; }
     this.commit(opts);
+  }
+
+  /**
+   * Run `fn`, collapsing everything it commits into one history entry.
+   *
+   * A macro that does twelve things must cost one undo, or nobody will risk
+   * running one. Nesting is a no-op rather than an error so a batch inside a
+   * batch still produces exactly one entry, which is the only sane behaviour
+   * once macros can call each other.
+   */
+  batch(label, fn) {
+    if (this._batch) return fn();
+    this._batch = { doc: structuredClone(this.doc), label };
+    try {
+      fn();
+    } finally {
+      const b = this._batch;
+      this._batch = null;
+      this._pending = b.doc;
+      this._label = b.label;
+      this.commit();
+    }
   }
 
   /** Mutate without adding a history entry (drag previews, playback state). */
