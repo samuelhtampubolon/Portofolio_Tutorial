@@ -1433,3 +1433,9 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .spec-edit { font-size: 12px; min-height: 220px; }
   .dv-hist { height: 96px; }
 }
+
+/* A branch you left: reachable, and visibly not on the path you are on. */
+.hist-item.abandoned { opacity: .82; }
+.hist-item.abandoned .hn { font-style: italic; }
+.hist-item.abandoned svg { color: var(--warn); }
+.hist-item.abandoned:hover { opacity: 1; }

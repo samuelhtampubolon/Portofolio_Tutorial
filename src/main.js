@@ -1071,14 +1071,24 @@ class App {
     this.draft.invalidate();
   }
 
+  /**
+   * View settings never enter the model's history.
+   *
+   * This is the single most bitterly reported thing about the packages this
+   * one imitates: you press undo expecting your last edit back and instead the
+   * grid turns on. How you are *looking* at a model is not a change to the
+   * model, so it is written with `quiet` rather than `edit`. It still saves,
+   * still travels in the document, and still marks the file dirty. It simply
+   * is not an undo step, because it was never an edit.
+   */
   toggleView(key) {
-    store.edit('View setting', (d) => { d.view[key] = !d.view[key]; }, { rebuild: false });
+    store.quiet((d) => { d.view[key] = !d.view[key]; });
     this.applyView();
     this.refreshUI();
   }
 
   setShading(mode) {
-    store.edit('Shading', (d) => { d.view.shading = mode; }, { rebuild: false });
+    store.quiet((d) => { d.view.shading = mode; });
     this.refreshBodies(true);
   }
 
@@ -1090,13 +1100,13 @@ class App {
   }
 
   setBackground(bg) {
-    store.edit('Background', (d) => { d.view.bg = bg; }, { rebuild: false });
+    store.quiet((d) => { d.view.bg = bg; });
     this.applyView();
     this.refreshUI();
   }
 
   toggleSection() {
-    store.edit('Section', (d) => { d.view.clip.enabled = !d.view.clip.enabled; }, { rebuild: false });
+    store.quiet((d) => { d.view.clip.enabled = !d.view.clip.enabled; });
     this.applyView();
     this.refreshUI();
   }
@@ -1608,33 +1618,51 @@ class App {
 
   /* ============================================================ dialogs */
 
+  /**
+   * The history dialog, which is where the tree earns its keep.
+   *
+   * Three groups: what you can go back to, where you are, and what is ahead.
+   * Then a fourth that no linear undo stack can offer at all: the states you
+   * undid past and then edited away from. In every other package those are
+   * gone. Here they are a click away for as long as the session lasts.
+   */
   showHistory() {
-    const undo = store.undoStack;
-    const redo = store.redoStack;
-    const rows = [];
-    undo.forEach((h, i) => rows.push({ label: h.label, i, kind: 'past' }));
-    rows.push({ label: 'Current state', kind: 'now' });
-    [...redo].reverse().forEach((h) => rows.push({ label: h.label, kind: 'future' }));
+    const t = store.timeline();
+    const body = el('div');
 
-    const list = el('div', { class: 'hist-list' }, rows.map((r, k) => el('div', {
-      class: `hist-item ${r.kind === 'now' ? 'now' : r.kind === 'future' ? 'future' : ''}`,
+    const row = (entry, kind) => el('div', {
+      class: `hist-item ${kind}`,
       onclick: () => {
-        const nowIndex = undo.length;
-        if (k < nowIndex) { for (let n = 0; n < nowIndex - k; n++) store.undo(); }
-        else if (k > nowIndex) { for (let n = 0; n < k - nowIndex; n++) store.redo(); }
+        if (kind !== 'now') { store.gotoNode(entry.id); this.refreshUI(); }
         closeModal();
-        this.refreshUI();
       },
     }, [
-      icon(r.kind === 'now' ? 'target' : r.kind === 'future' ? 'redo' : 'undo', { size: 14 }),
-      el('span', { class: 'hn', text: r.label }),
-      el('span', { class: 'hi', text: r.kind === 'now' ? 'you are here' : '' }),
-    ])));
+      icon(kind === 'now' ? 'target' : kind === 'future' ? 'redo' : kind === 'abandoned' ? 'merge' : 'undo', { size: 14 }),
+      el('span', { class: 'hn', text: entry.label }),
+      el('span', { class: 'hi', text: kind === 'now' ? 'you are here' : '' }),
+    ]);
+
+    if (!t.past.length && !t.future.length && !t.abandoned.length) {
+      body.appendChild(emptyState('Nothing to undo yet', 'Every edit you make lands here. View settings do not: changing the grid or the shading is not an edit, so it never costs you an undo.', 'history'));
+    } else {
+      body.appendChild(el('div', { class: 'hist-list' }, [
+        ...t.past.map(p => row(p, 'past')),
+        row(t.now, 'now'),
+        ...t.future.map(f => row(f, 'future')),
+      ]));
+      if (t.abandoned.length) {
+        body.appendChild(section(`Branches you left · ${t.abandoned.length}`, [
+          el('p', { class: 'hint', text: 'These are states you undid past and then edited away from. A linear undo stack throws them away the moment you make that next edit; here they are still reachable. Click one to go back to it, and the branch you are on now stays reachable too.' }),
+          el('div', { class: 'hist-list' }, t.abandoned.slice(0, 40).map(a => row(a, 'abandoned'))),
+        ], true, { icon: 'merge' }));
+      }
+    }
 
     modal({
-      title: 'Undo history', icon: 'history',
-      subtitle: `${undo.length} step${undo.length === 1 ? '' : 's'} back, ${redo.length} forward. Click any step to jump there.`,
-      body: [undo.length || redo.length ? list : emptyState('Nothing to undo yet', 'Every edit you make lands here.', 'history')],
+      title: 'History', icon: 'history', wide: !!t.abandoned.length,
+      subtitle: `${t.past.length} step${t.past.length === 1 ? '' : 's'} back, ${t.future.length} forward` +
+        (t.abandoned.length ? `, ${t.abandoned.length} on branches you left` : ''),
+      body,
       actions: [{ label: 'Close', primary: true }],
     });
   }
