@@ -49,6 +49,7 @@ import * as Tol from './intel/tolerance.js';
 import * as Merge from './intel/merge.js';
 import * as Spec from './intel/spec.js';
 import * as Dev from './intel/deviation.js';
+import * as Speak from './intel/speak.js';
 import { toDXF } from './draft/dxf.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
@@ -3977,6 +3978,123 @@ class App {
         { label: 'Cancel' },
       ],
     });
+  }
+
+
+  /* ========================================================== typed intent */
+
+  /**
+   * Say what you want, in the vocabulary the app knows.
+   *
+   * The readback is the whole design of this dialog. It is not a language
+   * model and it must never pretend to be one, so before anything is built it
+   * shows every fact it took from the sentence, in the app's own words, and
+   * lists any word it could not act on. A co-pilot that quietly does the wrong
+   * thing costs more than one that says it did not follow you.
+   */
+  showSpeak() {
+    const input = el('input', {
+      type: 'text', class: 'sp-input', spellcheck: 'false',
+      placeholder: 'a 120 by 80 plate 8 thick in aluminium',
+    });
+    const out = el('div', { class: 'sp-out' });
+    let current = null;
+
+    const target = [...this.selection][0] || null;
+    const targetName = target ? (store.feature(target)?.name || null) : null;
+
+    const read = () => {
+      const text = input.value.trim();
+      clear(out);
+      current = null;
+      if (!text) {
+        out.appendChild(el('div', { class: 'hint', text: 'Type an instruction and the effect appears here before anything is built.' }));
+        return;
+      }
+      const r = Speak.interpret(text, { doc: store.doc, target });
+      if (!r.ok) {
+        out.appendChild(el('div', { class: 'banner err', text: r.why }));
+        return;
+      }
+      current = r;
+
+      out.append(
+        el('div', { class: 'sp-read' }, [
+          el('h4', { text: 'What that says' }),
+          el('ul', {}, r.understood.map(u => el('li', { text: u }))),
+        ]),
+        el('div', { class: 'sp-read' }, [
+          el('h4', { text: 'What it would build' }),
+          el('ul', {}, r.features.map(f => el('li', {
+            text: `${f.name} (${CATALOG[f.type].label})` +
+              (f.inputs.length ? ` from ${f.inputs.length} input${f.inputs.length === 1 ? '' : 's'}` : '') +
+              `: ${Object.entries(f.params).filter(([, v]) => v !== undefined)
+                .map(([k, v]) => `${k} ${v}`).join(', ')}`,
+          }))),
+        ]),
+      );
+      if (r.params.length) {
+        out.appendChild(el('div', { class: 'sp-read' }, [
+          el('h4', { text: 'Parameters it would declare' }),
+          el('ul', {}, r.params.map(p => el('li', { text: `${p.name} = ${p.value}${p.note ? `  (${p.note})` : ''}` }))),
+        ]));
+      }
+      if (r.unknown.length) {
+        out.appendChild(el('div', { class: 'banner warn', text:
+          `Ignored: ${r.unknown.join(', ')}. This reads a vocabulary rather than English, so those words had no effect. Nothing was guessed from them.` }));
+      }
+      for (const n of r.notes) out.appendChild(el('div', { class: 'dx-item', text: n }));
+    };
+
+    let timer = null;
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(read, 140); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && current) { e.preventDefault(); apply(); }
+    });
+
+    const apply = () => {
+      if (!current) { this.flash('Nothing to build yet.', 'warn'); return; }
+      const r = current;
+      store.batch(`Build: ${input.value.trim().slice(0, 40)}`, () => {
+        const d = store.doc;
+        for (const p of r.params) d.params.push({ id: uid('p'), ...p });
+        for (const f of r.features) d.features.push(f);
+      });
+      this.selection.clear();
+      this.selection.add(r.features.at(-1).id);
+      this.rebuildNow();
+      this.flash(`${r.understood[0]}. Ctrl Z puts it back.`, 'ok', 4200);
+      closeModal();
+    };
+
+    read();
+    const body = el('div', {}, [
+      el('p', { class: 'hint', text: 'A grammar, not a language model. It recognises shapes, numbers, units, thread callouts and counts, and refuses anything outside that vocabulary rather than guessing. Everything it builds is a normal feature you can edit, drag and drive from a parameter afterwards.' }),
+      input,
+      targetName
+        ? el('div', { class: 'hint', text: `"${targetName}" is selected, so a hole will be cut from it.` })
+        : el('div', { class: 'hint', text: 'Nothing is selected, so a hole would arrive as a body to subtract yourself.' }),
+      out,
+      section('Things it understands', [
+        el('div', { class: 'sp-examples' }, Speak.EXAMPLES.map(ex => {
+          const b = el('button', { class: 'btn tiny', text: ex });
+          b.addEventListener('click', () => { input.value = ex; read(); input.focus(); });
+          return b;
+        })),
+        el('div', { class: 'hint', text: 'Shapes: box, plate, cylinder, tube, sphere, cone, torus, wedge, prism, pyramid, helix. Units: mm, cm, m, inches, feet. Threads: M1.6 to M36, clearance or tapped, from ISO 273. Counts become patterns, so you can change your mind about the number afterwards.' }),
+      ], false, { icon: 'book' }),
+    ]);
+
+    modal({
+      title: 'Say what you want', icon: 'command', wide: true,
+      subtitle: 'Typed intent, turned into real features',
+      body,
+      actions: [
+        { label: 'Build it', primary: true, run: () => { apply(); return true; } },
+        { label: 'Cancel' },
+      ],
+    });
+    setTimeout(() => input.focus(), 30);
   }
 
   zenModeOrRedo(e) {

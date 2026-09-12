@@ -350,6 +350,13 @@ export function buildCommands(app) {
     keywords: 'clipboard share paste review text',
   });
 
+  /* ------------------------------------------------------- typed intent */
+
+  add('speak.build', 'Say what you want…', 'command', 'Create', () => app.showSpeak(), {
+    key: 'Ctrl ⇧ B',
+    keywords: 'natural language type intent describe tell prompt copilot ai command sentence make a plate hole bolt',
+  });
+
   /* ---------------------------------------------------------- merge */
 
   add('vcs.merge', 'Merge a branch…', 'merge', 'Versions', () => app.showMerge(), {
