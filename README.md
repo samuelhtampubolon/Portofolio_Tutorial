@@ -504,17 +504,36 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs 58 headless assertions over the expression evaluator, the CSG kernel, the geometry
-builders, the rebuild engine, the DXF codec, the starter templates and the command registry. It shims `node_modules/three` from the
-vendored copy first; nothing is downloaded.
+This runs **394 headless checks** across six suites, in about two seconds. It shims
+`node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
+install.
 
-Behind it sit twelve more suites, run against a local server and a headless Chromium, totalling
-around **700 checks**. They are the reason the claims above are claims and not hopes: the ISO 286
-tables are checked limit by limit against the printed values, section properties against closed
-form, the tolerance levers by clicking each one and reading back the resulting Cpk, the spec round
-trip by doing it and diffing, the projection convention by measuring where the views land rather
-than by reading the label, and the responsive tiers by asserting nothing overflows at 390px, 744pt
-and 1440px.
+```
+ok   core            58 checks
+ok   drawing         37 checks
+ok   tolerance       77 checks
+ok   merge           74 checks
+ok   design as code  87 checks
+ok   deviation       61 checks
+```
+
+`npm run test:core` runs just the first one, which is the expression evaluator, the CSG kernel, the
+geometry builders, the rebuild engine, the DXF codec, the starter templates and the command
+registry.
+
+These suites are the reason the claims above are claims and not hopes. They check arithmetic against
+things that were true before this repository existed: the **ISO 286 tables limit by limit against
+the printed values** for H7/g6, H8/f7, H7/k6, H7/n6, H7/p6, H7/s6 and H11/c11; section properties
+against closed form (a rectangle exactly, a tessellated circle to 0.14%, a tube to 0.04%); the Cp of
+a centred band and its two-sided ppm against the normal distribution; a facet's depth inside a
+smooth cylinder against the sagitta; the projection convention by **measuring where the views land**
+rather than by reading the label; and the design-as-code round trip by doing it and diffing the
+result rather than asserting it works.
+
+Another seven suites drive a real headless Chromium against a local server, adding roughly 300 more
+checks. They need Playwright, so they are not part of `npm test`, but they are what caught the phone
+chrome leaking onto the desktop layout, a 21-pixel touch target, and a drawing dialog that read a
+field by the wrong name.
 
 ## Deploying your own copy
 
