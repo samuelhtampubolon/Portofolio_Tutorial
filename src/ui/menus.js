@@ -169,7 +169,7 @@ export function menuDefs(app, c) {
 
     ['Studio', () => [
       { header: 'Start from a requirement' },
-      c('studio.brief'), c('speak.build'),
+      c('studio.brief'), c('speak.build'), c('lib.fasteners'),
       '-',
       { header: 'Check and cost' },
       c('studio.doctor'), c('studio.cost'),
@@ -267,7 +267,7 @@ export function ribbonDefs(app) {
     { label: 'Studio', items: ['studio.brief', 'studio.doctor', 'studio.cost', 'release.package'] },
     { label: 'Analyse', items: ['studio.section', 'studio.clash', 'tol.stack', 'cfg.manage', 'vcs.commit', 'vcs.browse'] },
     { label: 'Drawing', items: ['draw.sheet', 'spec.edit', 'vcs.merge'] },
-    { label: 'Intent', items: ['speak.build'] },
+    { label: 'Intent', items: ['speak.build', 'lib.fasteners'] },
   ];
 }
 

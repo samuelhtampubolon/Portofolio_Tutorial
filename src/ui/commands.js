@@ -357,6 +357,10 @@ export function buildCommands(app) {
     keywords: 'natural language type intent describe tell prompt copilot ai command sentence make a plate hole bolt',
   });
 
+  add('lib.fasteners', 'Fasteners…', 'key', 'Create', () => app.showFasteners(), {
+    keywords: 'bolt screw nut thread iso metric m6 m8 torque proof load clearance tapping drill washer hardware library',
+  });
+
   /* ---------------------------------------------------------- merge */
 
   add('vcs.merge', 'Merge a branch…', 'merge', 'Versions', () => app.showMerge(), {

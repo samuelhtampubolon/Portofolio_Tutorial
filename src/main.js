@@ -50,6 +50,7 @@ import * as Merge from './intel/merge.js';
 import * as Spec from './intel/spec.js';
 import * as Dev from './intel/deviation.js';
 import * as Speak from './intel/speak.js';
+import * as Fast from './intel/fasteners.js';
 import { toDXF } from './draft/dxf.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
@@ -4095,6 +4096,111 @@ class App {
       ],
     });
     setTimeout(() => input.focus(), 30);
+  }
+
+
+  /* =========================================================== fasteners */
+
+  /**
+   * The fastener library.
+   *
+   * A component in CAD is normally a shape and nothing else, so the proof
+   * load, the torque, the tapping drill and the purchase-order description all
+   * get looked up by hand. They are all published numbers, so they are here,
+   * next to the geometry, and they travel with it into the bill of materials.
+   */
+  showFasteners() {
+    let size = 'M8';
+    let cls = '8.8';
+    let length = 30;
+    let fit = 'medium';
+    let lubricated = false;
+    let load = 5000;
+    let count = 4;
+    let shear = false;
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      const s = Fast.spec(size, { cls, length, fit, lubricated });
+      const j = Fast.checkJoint(size, { cls, load, count, shear, safety: 2, lubricated });
+      const sev = j.utilisation <= 0.5 ? 'ok' : j.pass ? 'warn' : 'err';
+
+      host.append(
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Size' }),
+          select(size, Fast.SIZES.map(x => [x, x]), (v) => { size = v; draw(); }),
+        ]),
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Property class' }),
+          select(cls, Object.keys(Fast.CLASSES).map(x => [x, x]), (v) => { cls = v; draw(); }),
+        ]),
+        el('div', { class: 'hint', text: Fast.CLASSES[cls].note }),
+        numRow('Length (mm)', length, (v) => { length = Math.max(2, v); draw(); }),
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Clearance' }),
+          segmented(fit, [['close', 'Close'], ['medium', 'Medium'], ['free', 'Free']], (v) => { fit = v; draw(); }),
+        ]),
+
+        section('What this bolt is', [kv([
+          ['Designation', `${s.designation}, ${s.standard}`],
+          ['Thread pitch', `${s.pitch} mm (coarse, ISO 724)`],
+          ['Tensile stress area', `${s.tensileArea} mm²`],
+          ['Proof stress', `${s.proofStress} N/mm²`],
+          ['Proof load', `${(s.proofLoadN / 1000).toFixed(1)} kN`],
+          ['Clearance hole', `⌀${s.clearanceHole} mm (${s.clearanceFit}, ISO 273)`],
+          ['Tapping drill', `⌀${s.tappingDrill} mm`],
+          ['Min thread engagement', `${s.minThreadEngagement} mm`],
+          ['Head', `⌀${s.headDiameter} × ${s.headHeight} mm`],
+          ['Nut', `${s.nutAcrossFlats} A/F × ${s.nutHeight} mm, ISO 4032`],
+        ])], true, { icon: 'key' }),
+        el('div', { class: 'hint', text: s.engagementNote }),
+
+        section('Tightening', [
+          checkbox('Lubricated thread', lubricated, (v) => { lubricated = v; draw(); }),
+          el('div', { class: 'banner ok', text: `${s.torqueNm} N·m to reach ${(s.preloadN / 1000).toFixed(1)} kN of preload.` }),
+          el('div', { class: 'hint', text: s.torqueBasis }),
+        ], true, { icon: 'rotate' }),
+
+        section('Will the joint hold?', [
+          numRow('Total load (N)', load, (v) => { load = Math.max(0, v); draw(); }),
+          numRow('Number of bolts', count, (v) => { count = Math.max(1, Math.round(v)); draw(); }),
+          checkbox('Loaded in shear rather than tension', shear, (v) => { shear = v; draw(); }),
+          el('div', { class: `banner ${sev}`, text:
+            `${j.per} N per bolt against ${j.allowableN} N allowable in ${j.mode} at safety factor ${j.safety}. ` +
+            `${(j.utilisation * 100).toFixed(0)}% used. ${j.verdict}.` }),
+          (() => {
+            const smallest = Fast.sizeFor({ load, count, cls, shear, safety: 2 });
+            const b = el('button', { class: 'btn', text: smallest
+              ? `Smallest class ${cls} bolt that holds this: ${smallest.size}`
+              : 'No bolt in this library carries that load' });
+            if (smallest) b.addEventListener('click', () => { size = smallest.size; draw(); });
+            return b;
+          })(),
+        ], true, { icon: 'physics' }),
+        el('div', { class: 'banner warn', text: j.caveat }),
+      );
+    };
+    draw();
+
+    modal({
+      title: 'Fasteners', icon: 'key', wide: true, size: 'tall',
+      subtitle: 'ISO metric, with the data a drawing and a purchase order need',
+      body: host,
+      actions: [
+        { label: 'Add to the model', run: () => {
+          const made = Fast.featuresFor(size, { length, cls }, makeFeature);
+          store.batch(`Add ${made.spec.designation}`, () => {
+            store.doc.features.push(...made.features);
+          });
+          this.selection.clear();
+          this.selection.add(made.features.at(-1).id);
+          this.rebuildNow();
+          this.flash(`${made.spec.designation} added. Torque ${made.spec.torqueNm} N·m.`, 'ok', 5000);
+        } },
+        { label: 'Close', primary: true },
+      ],
+    });
   }
 
   zenModeOrRedo(e) {
