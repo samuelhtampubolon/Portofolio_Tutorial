@@ -26,9 +26,9 @@ import {
   isQuickMenuOpen, field, checkbox, select, segmented, section, kv, scrubNumber, emptyState, icon,
 } from './ui/shell.js';
 import { buildCommands, TEMPLATES, registerFeatureFactory, ICON_FOR } from './ui/commands.js';
-import { menuDefs, ribbonDefs, quickDefaults, viewportContextMenu, SHORT_LABEL } from './ui/menus.js';
+import { menuDefs, ribbonDefs, quickDefaults, viewportContextMenu, SHORT_LABEL, MENU_ICON } from './ui/menus.js';
 import { OperatorHost } from './ui/operators.js';
-import { MobileShell, isPhone, attachLongPress } from './ui/mobile.js';
+import { MobileShell, isPhone, isTablet, attachLongPress } from './ui/mobile.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
 import { TimelineUI } from './ui/timelineui.js';
@@ -44,6 +44,7 @@ const DEFAULT_PREFS = {
   showLearn: true,
   confirmDelete: false,
   edgeAngle: 24,
+  dock: 'right',
   learnDone: [],
 };
 
@@ -69,6 +70,9 @@ class App {
 
   boot() {
     document.documentElement.setAttribute('data-theme', this.prefs.theme);
+    // Which panel the tablet dock shows. Harmless on the other two tiers: no
+    // rule outside the tablet breakpoint reads it.
+    document.documentElement.dataset.dock = this.prefs.dock === 'left' ? 'left' : 'right';
 
     this.vp = new Viewport($('#viewport3d'));
     this.vp.edgeAngle = this.prefs.edgeAngle;
@@ -327,10 +331,29 @@ class App {
     this.updateStatus();
     this.updateTopActions();
     this.mobile?.refresh();
+    this.updateDockSwitch();
     const name = $('#docName');
     if (name && document.activeElement !== name) name.value = store.doc.meta.name;
     $('#docDirty')?.classList.toggle('on', store.dirty);
     this.renderLearn();
+  }
+
+  /** Keep the tablet dock switch labelled with whatever the panels now hold. */
+  updateDockSwitch() {
+    // The panel titles are written for a full-width heading ("Layers & objects")
+    // and truncate to noise in a half-width tab, so the switch carries its own
+    // short names instead.
+    const names = {
+      left: { draft: 'Layers', sim: 'Bodies' }[this.workspace] || 'Outline',
+      right: 'Properties',
+    };
+    for (const b of $$('.dock-switch .ds-btn')) {
+      const which = b.dataset.dock;
+      b.querySelector('.ds-label').textContent = names[which];
+      const on = this.dock === which;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-selected', String(on));
+    }
   }
 
   markSaved() { $('#docDirty')?.classList.remove('on'); }
@@ -1054,13 +1077,57 @@ class App {
     this.markLearn('measure');
   }
 
-  /* ============================================================ panels */
+  /* ============================================================ panels
+   *
+   * Three layouts share one set of commands.
+   *
+   *   Desktop  two independent side panels, each collapsible on its own.
+   *   Tablet   one dock column beside the stage. Both panels still exist and
+   *            still render; `data-dock` on <html> decides which is on screen
+   *            and `.dock-collapsed` hides the column entirely. Two 280px
+   *            panels would leave about 200px of viewport on an iPad in
+   *            portrait, which is not a CAD viewport.
+   *   Phone    panels become bottom sheets, handled by MobileShell.
+   *
+   * `togglePanel` is what every surface calls (the T and N keys, the Window
+   * menu, the panel-head buttons), so the branch lives there and nowhere else.
+   */
 
-  isCollapsed(side) { return $('#workarea').classList.contains(`${side}-collapsed`); }
+  /** Which panel the tablet dock is currently showing. */
+  get dock() { return document.documentElement.dataset.dock === 'left' ? 'left' : 'right'; }
+
+  /** Show `side` in the tablet dock, opening the dock if it was collapsed. */
+  setDock(side) {
+    document.documentElement.dataset.dock = side;
+    $('#workarea').classList.remove('dock-collapsed');
+    this.prefs.dock = side;
+    this.savePrefs();
+    setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
+    this.refreshUI();
+  }
+
+  /** Hide or show the whole tablet dock. Bound to the floating cluster. */
+  toggleDock() {
+    $('#workarea').classList.toggle('dock-collapsed');
+    setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
+    this.refreshUI();
+  }
+
+  isCollapsed(side) {
+    if (isPhone()) return true;
+    if (isTablet()) return this.dock !== side || $('#workarea').classList.contains('dock-collapsed');
+    return $('#workarea').classList.contains(`${side}-collapsed`);
+  }
 
   togglePanel(which) {
     if (which === 'timeline') { this.setTimelineVisible($('#timeline').hidden); this.refreshUI(); return; }
     if (isPhone()) { this.mobile.togglePanelSheet(which); return; }
+    if (isTablet()) {
+      // Asking for the panel that is already showing means "put it away";
+      // asking for the other one swaps the dock rather than stacking them.
+      if (this.isCollapsed(which)) this.setDock(which); else this.toggleDock();
+      return;
+    }
     $('#workarea').classList.toggle(`${which}-collapsed`);
     setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
     this.refreshUI();
@@ -1068,9 +1135,16 @@ class App {
 
   zenMode() {
     const w = $('#workarea');
-    const on = !(w.classList.contains('left-collapsed') && w.classList.contains('right-collapsed'));
-    w.classList.toggle('left-collapsed', on);
-    w.classList.toggle('right-collapsed', on);
+    const tablet = isTablet();
+    const on = tablet
+      ? !w.classList.contains('dock-collapsed')
+      : !(w.classList.contains('left-collapsed') && w.classList.contains('right-collapsed'));
+    if (tablet) {
+      w.classList.toggle('dock-collapsed', on);
+    } else {
+      w.classList.toggle('left-collapsed', on);
+      w.classList.toggle('right-collapsed', on);
+    }
     if (on) this.setTimelineVisible(false);
     setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
     this.flash(on ? 'Zen mode — press Ctrl ⇧ Z to bring the panels back' : 'Panels restored', 'info', 2200);
@@ -1079,7 +1153,8 @@ class App {
 
   resetLayout() {
     const w = $('#workarea');
-    w.classList.remove('left-collapsed', 'right-collapsed', 'mobile-left', 'mobile-right');
+    w.classList.remove('left-collapsed', 'right-collapsed', 'mobile-left', 'mobile-right', 'dock-collapsed');
+    document.documentElement.dataset.dock = this.prefs.dock === 'left' ? 'left' : 'right';
     this.setTimelineVisible(this.workspace === 'sim');
     setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
     this.refreshUI();
@@ -1157,6 +1232,21 @@ class App {
       });
       bar.appendChild(b);
     }
+
+    // Eleven menu buttons stop fitting somewhere around a tablet's width. Rather
+    // than drop menus or scroll the bar, the same eleven collapse into one
+    // button holding them as submenus; CSS decides which form is showing, so
+    // both are always built and neither needs a resize listener.
+    const compact = el('button', {
+      class: 'menu-compact', title: 'All menus', 'aria-label': 'All menus', 'aria-haspopup': 'true',
+    }, [icon('menu', { size: 16 }), el('span', { text: 'Menu' })]);
+    compact.addEventListener('click', () => {
+      if (compact.classList.contains('open')) { closeDropdown(); return; }
+      dropdown(compact, defs.map(([label, itemsFn]) => ({
+        label, icon: MENU_ICON[label], sub: itemsFn().filter(Boolean),
+      })));
+    });
+    bar.appendChild(compact);
   }
 
   buildRibbon() {
@@ -1657,6 +1747,21 @@ class App {
       class: 'mini-btn', title: 'Collapse the properties panel  (N)',
       onclick: () => (mobile() ? this.mobile.closeSheet() : this.togglePanel('right')),
     }, [icon('chevron-right', { size: 14 })]));
+
+    // On a tablet only one panel is docked at a time, so each head carries the
+    // switch that brings the other one forward. It is built on every tier and
+    // shown by CSS on one, which keeps the breakpoint in a single place.
+    for (const side of ['left', 'right']) {
+      const head = $(`#${side}panel .panel-head`);
+      const sw = el('div', { class: 'dock-switch', role: 'tablist', 'aria-label': 'Docked panel' });
+      for (const [which, ic] of [['left', 'workspace'], ['right', 'settings']]) {
+        sw.appendChild(el('button', {
+          class: 'ds-btn', role: 'tab', dataset: { dock: which },
+          onclick: () => this.setDock(which),
+        }, [icon(ic, { size: 14 }), el('span', { class: 'ds-label' })]));
+      }
+      head.insertBefore(sw, head.querySelector('.ph-actions'));
+    }
 
     this.vp.onHover = (hit) => {
       const u = store.doc.meta.units;

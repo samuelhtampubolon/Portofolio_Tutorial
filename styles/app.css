@@ -174,7 +174,7 @@ svg { flex: none; }
 .menubar > button:hover { background: var(--bg-hover); color: var(--txt); }
 .menubar > button.open { background: var(--accent-soft); color: var(--accent); }
 @media (max-width: 1080px) { .menubar > button { padding: 5px 7px; font-size: 12.5px; } }
-@media (max-width: 820px) { .menubar { display: none; } }
+@media (max-width: 699px) { .menubar { display: none; } }
 
 .top-spacer { flex: 1; min-width: 8px; }
 
@@ -192,7 +192,7 @@ svg { flex: none; }
 .ws:hover { color: var(--txt); }
 .ws[aria-selected="true"] { background: var(--accent); color: #fff; box-shadow: var(--shadow-1); }
 .ws[aria-selected="true"] svg { color: #fff; }
-@media (max-width: 700px) { .ws .ws-label { display: none; } .ws { padding: 4px 10px; } }
+@media (max-width: 899px) { .ws .ws-label { display: none; } .ws { padding: 4px 11px; } }
 
 .doc-chip {
   display: flex; align-items: center; gap: 5px; min-width: 0;
@@ -340,6 +340,22 @@ svg { flex: none; }
 }
 .panel-head .ph-title { flex: 1; overflow: hidden; text-overflow: ellipsis; }
 .panel-head .ph-actions { display: flex; gap: 1px; }
+
+/* The tablet dock switch. Built on every tier, shown on one: the tablet
+   breakpoint flips it to flex and hides the panel title it replaces. */
+.dock-switch {
+  display: none; flex: 1; gap: 2px; min-width: 0;
+  background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--r); padding: 2px;
+}
+.dock-switch .ds-btn {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: 5px;
+  background: none; border: 0; border-radius: var(--r-sm); cursor: pointer;
+  color: var(--txt-3); padding: 5px 6px; min-height: 30px;
+  font: inherit; letter-spacing: .06em; text-transform: uppercase; font-size: 10px; font-weight: 640;
+}
+.dock-switch .ds-btn:hover { color: var(--txt); }
+.dock-switch .ds-btn.on { background: var(--bg-2); color: var(--txt); box-shadow: var(--shadow-1); }
+.dock-switch .ds-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mini-btn {
   background: none; border: 0; color: var(--txt-3); cursor: pointer;
   padding: 3px; border-radius: var(--r-sm); display: grid; place-items: center;
@@ -443,7 +459,10 @@ svg { flex: none; }
 .tree-tools { display: flex; gap: 4px; margin-bottom: 7px; }
 .tree-search { position: relative; flex: 1; display: flex; align-items: center; }
 .tree-search svg { position: absolute; left: 7px; color: var(--txt-3); pointer-events: none; z-index: 2; }
-.tree-search input { padding-left: 26px; height: 26px; background: transparent; }
+/* input[type="search"] is defined further down the file at the same specificity,
+   so its padding shorthand wins over a bare `.tree-search input` and the
+   placeholder ends up underneath the icon. Match on the type here too. */
+.tree-search input[type="search"] { padding-left: 26px; height: 26px; background: transparent; }
 
 .tree-node {
   display: flex; align-items: center; gap: 6px;
@@ -779,6 +798,14 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .tl-transport button { width: 40px; height: 38px; }
   .vc { width: 40px; height: 36px; }
   .chk { padding: 5px 0; }
+  .ws { min-height: 32px; }
+  .dock-switch .ds-btn { min-height: 34px; }
+  .dropdown { padding: 5px; }
+
+  /* #ribbon hides its scrollbar until hover, and a touch pointer never hovers,
+     so the ribbon would scroll with nothing to say that it can. Keep the thumb. */
+  #ribbon { scrollbar-width: thin; }
+  #ribbon:not(:hover)::-webkit-scrollbar-thumb { background: var(--line-strong); }
 
   /* 16px is the threshold below which iOS Safari zooms the page on focus */
   input[type="text"], input[type="number"], input[type="search"], select, textarea {
@@ -792,13 +819,33 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .tn-eye { opacity: .8; }
 }
 
-/* ---- phone layout ----
-   Driven by the media query itself rather than a class applied from JS: a
-   MediaQueryList change event is not delivered in every engine, and a
-   missed one would leave desktop chrome on a phone-sized screen. The class
-   is still set for behaviour (which sheet opens), never for layout. */
-@media (max-width: 900px) {
-  /* ---- phone layout ---- */
+/* ------------------------------------------------------------------
+   Breakpoints. Layout comes from the media queries themselves, never
+   from a class applied by JavaScript: a MediaQueryList change event is
+   not delivered in every engine, and a missed one would leave desktop
+   chrome on a phone-sized screen.
+
+     phone    ≤699px, or any coarse-pointer screen under 461px tall
+              (a phone held sideways) — bottom bar and sheets
+     tablet   700–1279px and tall enough to be a real tablet —
+              one dockable side panel beside the viewport
+     desktop  ≥1280px — the full three-column layout
+
+   iPad portrait runs from 744 CSS px (the mini) to 1024 (the 12.9in),
+   which is why the phone breakpoint stops below all of them: a tablet
+   has room for a docked panel and should not be given a phone's chrome.
+   The widest phone in portrait is around 430px, so the 699/700 boundary
+   has slack on both sides.
+   ------------------------------------------------------------------ */
+
+/* Phone and tablet chrome, hidden on every tier that does not ask for it.
+   This must live outside the phone query: inside it, the rule would be
+   overridden by the same query's own display values and the bottom bar
+   would appear on the desktop. */
+#bottombar, #mobFab { display: none; }
+
+/* ---- phone layout ---- */
+@media (max-width: 699px), (max-height: 460px) and (pointer: coarse) {
   body {
     grid-template-rows: auto auto 1fr auto auto auto;
     padding-bottom: 0;
@@ -861,7 +908,6 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .tl-time { flex: none; }
 
   /* ---- bottom navigation ---- */
-  #bottombar { display: none; }
   #bottombar {
     display: flex; align-items: stretch;
     background: var(--bg-2);
@@ -882,7 +928,6 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .bb-badge { position: absolute; top: -1px; right: -4px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
 
   /* ---- the floating view cluster ---- */
-  #mobFab { display: none; }
   #mobFab {
     display: flex; flex-direction: column; gap: 7px;
     position: absolute; right: 10px; bottom: 12px; z-index: 8;
@@ -1036,7 +1081,7 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
 }
 
 /* ---- landscape phones: the bottom bar would eat too much height ---- */
-@media (max-width: 900px) and (max-height: 480px) and (orientation: landscape) {
+@media (max-width: 900px) and (max-height: 480px) and (orientation: landscape) and (pointer: coarse) {
   #bottombar { padding-bottom: 0; }
   .bb-item { min-height: 42px; }
   .bb-label { display: none; }
@@ -1045,7 +1090,79 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .tool .tx { display: none; }
 }
 
-/* ---- tablets keep the desktop layout but with touch sizing ---- */
-@media (min-width: 901px) and (max-width: 1180px) {
-  #workarea { grid-template-columns: 248px minmax(0, 1fr) 262px; }
+/* ============================================================
+   Tablet
+
+   Two 280px side panels leave a 200px viewport on an iPad in portrait,
+   so the tablet tier docks a single panel beside the stage and lets you
+   switch which one is showing. The menu bar stays — it is collapsed to
+   one button where there is no room for eleven.
+   ============================================================ */
+@media (min-width: 700px) and (max-width: 1279px) and (min-height: 461px) {
+  #workarea {
+    grid-template-columns: minmax(0, 1fr) var(--dock-w, 300px);
+    grid-template-rows: minmax(0, 1fr);
+  }
+  #stage { grid-column: 1; grid-row: 1; }
+  #leftpanel, #rightpanel {
+    grid-column: 2; grid-row: 1;
+    border-left: 1px solid var(--line); border-right: 0;
+  }
+  html[data-dock="left"] #rightpanel { display: none; }
+  html[data-dock="right"] #leftpanel { display: none; }
+  #workarea.dock-collapsed { grid-template-columns: minmax(0, 1fr) 0; }
+  #workarea.dock-collapsed #leftpanel,
+  #workarea.dock-collapsed #rightpanel { display: none; }
+
+  .dock-switch { display: flex; }
+  .panel-head { padding: 6px 7px 6px 9px; }
+  .panel-head .ph-title { display: none; }
+
+  /* The floating cluster carries the dock toggle, which is the only way back
+     to the panels once the dock is collapsed. It sits above the axis gizmo in
+     the bottom-right corner rather than on top of it. */
+  #mobFab {
+    display: flex; flex-direction: column; gap: 7px;
+    position: absolute; right: 10px; bottom: 92px; z-index: 8;
+  }
+
+  /* The outline panel is docked on the right here, so its collapse chevron
+     would otherwise point away from the edge it actually folds towards. */
+  #leftActions .mini-btn svg { transform: rotate(180deg); }
+
+  .doc-chip { display: flex; flex: 0 1 auto; max-width: 200px; }
+  .menubar { display: flex; }
+  #statusStats { display: none; }
+  .sb-keys { display: none; }
+  #timeline { height: 214px; }
+
+  /* The workspace tabs are the one control in the top bar that must never be
+     clipped, so the brand wordmark and the document chip yield to them. */
+  .brand-name { display: none; }
+  .workspaces { flex: none; }
+  .top-spacer { min-width: 4px; }
+
+  /* The view cube is a mouse control at desktop size; scale it to something a
+     fingertip can still hit without eating a quarter of the viewport. */
+  .vc { width: 30px; height: 28px; font-size: 9.5px; }
+  .vc.wide { width: 63px; }
+  #axisHint { width: 60px; height: 60px; }
 }
+
+/* Eleven menu buttons, three workspace tabs, the document chip and eight top
+   actions do not all fit below the desktop breakpoint: on an iPad in landscape
+   the actions at the right end were being pushed off the edge. Below 1280px the
+   menu bar collapses to a single button holding the same eleven menus. */
+@media (max-width: 1279px) {
+  .menubar > button { display: none; }
+  .menubar > button.menu-compact { display: flex; }
+}
+@media (min-width: 1280px) {
+  .menubar > button.menu-compact { display: none; }
+}
+
+.menubar > button.menu-compact {
+  align-items: center; gap: 6px; padding: 5px 10px;
+}
+
+
