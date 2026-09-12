@@ -174,6 +174,109 @@ An earlier version of this fitted circles to boundary loops, and a test caught i
 rectangular side facets of a cylinder wall were holes. They were: a rectangle's four corners really
 are equidistant from its centre.
 
+### The drawing is still the contract
+
+<p align="center">
+<img src="docs/images/drawing-sheet.png" alt="A first-angle shop drawing of a drilled plate with dimensions, hole callouts and a filled title block" width="820">
+</p>
+
+TesserCAD projects **shop drawings** from the model: orthographic views on a real paper size, at a
+standard scale, with a filled title block. This matters because a supplier quotes from a dimensioned
+print, not from an STL, and a package that cannot produce one leaves its user to redraw their own
+part somewhere else.
+
+Hidden lines are classified, not guessed. Getting there took three attempts worth recording. A
+raycaster was the obvious approach and silently never classified anything, because a
+`MeshBasicMaterial` culls back faces and the ray needs to hit the far side of the solid. Replacing it
+with a binned projected-triangle occluder, and merging collinear edges in 3D *before* classifying
+rather than after, took one sheet from **88 seconds to under one**. Then long diagonal streaks
+appeared across flat faces, and the diagnosis was that the boolean engine leaves T-junctions: an edge
+with a single owning triangle looks exactly like a silhouette boundary and is not one. Detecting a
+closed solid by comparing its signed volume against area^1.5 and discarding single-owner edges on it
+took the top view of a drilled plate from 191 segments to the four lines it actually has.
+
+The projection convention is a setting, not a label. A drawing laid out in third angle with a
+first-angle symbol in the title block tells the machinist to mirror the part, so the layout and the
+stated symbol come from **one** entry each: first angle puts the view from above below the front
+view and the right-side view to its left, third angle puts them above and to the right. A test
+asserts the geometry, not the wording.
+
+Output is SVG for print and DXF on separate visible, hidden, centre, dimension and text layers.
+
+### Tolerance is a range, not a number
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/tolerance-stack.png" alt="A tolerance stack-up showing worst case, RSS and Monte Carlo side by side"></td>
+<td width="50%"><img src="docs/images/tolerance-fits.png" alt="ISO 286 fits resolved at 25mm"></td>
+</tr>
+</table>
+
+**Stack-up, three ways at once.** Worst case is what a drawing promises and is almost always too
+pessimistic to build to. Root sum square is what a run of parts really does. Monte Carlo shows
+whether the failures pile against one limit or spread evenly. Quoting one without the others is how
+a stack-up spreadsheet misleads, so all three are on screen together, with **Cp and Cpk** so the
+answer is in the language a production engineer already argues in.
+
+The chain is ranked by variance share, because halving the biggest contributor buys far more than
+halving three small ones, and the percentages say by how much. The advice is priced: scale every
+open tolerance, tighten one link, or re-centre when the chain is tight but aimed off target. Every
+lever is a button, and a test clicks each one and checks it actually lands on the requested Cpk.
+Where nothing can work it says so rather than offering a tightening that would not help: if the
+nominals sum to a number outside the requirement, no tolerance is small enough, and that is a design
+change.
+
+**ISO 286 fits, resolved at your size.** A fit table is the reference everybody looks up and nobody
+remembers, and looking it up gives deviations in micrometres that still have to be added to a
+nominal by hand. Here the nominal is the one the model uses and the answer is the clearance in
+millimetres. The IT grades and fundamental deviations are the published tables, not interpolations,
+and the suite checks them limit by limit against the printed values for H7/g6, H8/f7, H7/k6, H7/n6,
+H7/p6, H7/s6 and H11/c11.
+
+**Is this my part?** Point a deviation map at an incoming mesh and it measures the exact
+point-to-triangle distance from every sampled point to the nearest surface of the model, signed, so
+outside reads positive and a gouge negative. The histogram makes the *kind* of difference legible: a
+symmetric spread is tessellation, one tall bar off centre is a mis-sized feature. Size and position
+are asked as bounding-box questions rather than inferred from distances, so **a file in inches is
+named as a unit mismatch** instead of reported as a shape that differs by 900mm.
+
+### Git for geometry, and the design as text
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/merge-conflict.png" alt="A three-way merge offering both values of a conflicting parameter"></td>
+<td width="50%"><img src="docs/images/spec-code.png" alt="The document as editable text, with the effect of an edit shown before it is applied"></td>
+</tr>
+</table>
+
+**A three-way merge on the feature tree.** The usual excuse is that geometry cannot be merged, which
+is true of a binary kernel dump and false of a feature tree: a feature tree is an ordered list of
+small records, and that is the thing git merges all day. Two people who changed different parameters
+of the same feature get both changes with no interaction at all. The same parameter changed twice is
+a conflict carrying both values, and **nothing is averaged** — two numbers a person chose
+deliberately are a question, not a calculation. A delete that collides with an edit is a question
+too, not a silent drop. Order is merged as a sequence, because a shell after a fillet is a different
+part from a fillet after a shell. The whole merge is one undo step.
+
+**The document and its text are the same object.** Scripted CAD gives you diffs, review and
+generation, and gives up the mouse. Graphical CAD gives you the mouse and a format only its own
+binary can read. The usual compromise bolts a scripting API onto the side, which is a third
+representation that drifts from the other two. This is not that: the spec is a projection of the
+document and parsing it is the inverse projection, so editing the model rewrites the text and
+applying the text rewrites the model. Ids are preserved, so history and merges still line up.
+Expressions are stored verbatim and checked against the declared parameters, so a mistyped name is
+reported **with a line number** rather than failing quietly at rebuild. Applying goes through a
+review that names what would change first, because text is a sharp enough tool to delete half a
+model with one keystroke.
+
+Mesh payloads are the one thing text cannot carry: tens of thousands of floats would make the spec
+unreadable and the diff useless. They stay attached to the document and are reattached by id, and
+the round-trip check verifies that rather than the README asserting it.
+
+**Design intent that reads back.** Exporting intent alongside a mesh is half a promise; a file
+nothing can import is a file nobody trusts. So the export is invertible, and the app checks the
+inversion by doing it on your document and listing anything that did not survive.
+
 ### Configurations, version control and export that respects tolerance
 
 **Configurations** put every size of a part in one file. A configuration stores only the parameters
@@ -339,6 +442,23 @@ value is a gesture, not a type-tab-commit cycle.
 - **Bake dynamics to keyframes** to hand-edit a physics result.
 - **Record the timeline to video** (WebM) using the browser's own encoder.
 
+**Engineering**
+- **Shop drawings**: orthographic views on A4/A3/A2 at a standard scale, hidden lines classified
+  rather than guessed, hole callouts with the nearest standard size, a filled title block, and
+  first- or third-angle projection where the layout and the symbol come from one setting.
+- **Tolerance stack-up** three ways at once (worst case, root sum square, 20,000-trial Monte Carlo)
+  with **Cp and Cpk**, contributors ranked by variance share, and every fix offered as a button
+  that is tested to actually reach the target.
+- **ISO 286 fits**: nine named hole-basis fits resolved at your nominal, from the published IT
+  grade and fundamental deviation tables.
+- **Deviation map**: exact point-to-triangle distance from an incoming mesh to the model, signed,
+  with unit mismatches and registration offsets named as such rather than reported as shape errors.
+- **Three-way merge** on the feature tree, with conflicts that carry both real values and never an
+  average, and the whole merge as one undo step.
+- **Design as code**: the document and its text as one object, with expressions checked against the
+  declared parameters and every edit reviewed before it is applied.
+- **Design intent** that exports *and* imports, with the round trip verified on your own document.
+
 **Files**
 - Projects are plain JSON (`.tcad`) — diffable, scriptable, future-proof.
 - Export **STL** (binary or ASCII), **OBJ**, **glTF/GLB**, **PLY**, **DXF**, **SVG**,
@@ -387,6 +507,14 @@ npm test
 This runs 58 headless assertions over the expression evaluator, the CSG kernel, the geometry
 builders, the rebuild engine, the DXF codec, the starter templates and the command registry. It shims `node_modules/three` from the
 vendored copy first; nothing is downloaded.
+
+Behind it sit twelve more suites, run against a local server and a headless Chromium, totalling
+around **700 checks**. They are the reason the claims above are claims and not hopes: the ISO 286
+tables are checked limit by limit against the printed values, section properties against closed
+form, the tolerance levers by clicking each one and reading back the resulting Cpk, the spec round
+trip by doing it and diffing, the projection convention by measuring where the views land rather
+than by reading the label, and the responsive tiers by asserting nothing overflows at 390px, 744pt
+and 1440px.
 
 ## Deploying your own copy
 
@@ -500,6 +628,19 @@ It is worth being clear about what this is not, so you can decide whether it fit
 - **Collisions use bounding spheres.** That is the right tool for drop tests, packing studies
   and sequencing, and the wrong tool for precise contact mechanics. There is no FEA, no CFD
   and no stress analysis.
+- **Drawings are dimensioned automatically, not completely.** You get the overall extents of each
+  view and a diameter callout per recognised hole. Datums, geometric tolerance, surface finish,
+  weld symbols and section views are not generated, and the automatic dimensions are a starting
+  point a drafter would edit rather than a finished print.
+- **Tolerance analysis assumes independence.** Real machining has correlated errors from a shared
+  fixture, a shared operator and a shared thermal cycle, which the model cannot see. Treat the ppm
+  figure as an order of magnitude, and the ISO 286 tables as the exact thing they are.
+- **The merge is over the feature tree, not the geometry.** It is a real three-way merge on the
+  records that produce the shape, which is what makes it possible at all; it does not reason about
+  whether the merged result is a sensible solid. Check the rebuild afterwards.
+- **The deviation map samples.** It caps the number of measured points so it finishes on a click,
+  so the peak is the worst of what was sampled rather than the worst that exists. The RMS is the
+  more robust number of the two.
 - **Assemblies are flat.** Bodies are a single ordered list; there are no sub-assemblies or
   mates. Patterns and booleans give you most of the structure you need in practice.
 - **Video recording depends on the browser's encoder** (`MediaRecorder`), so the output is

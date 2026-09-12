@@ -421,13 +421,27 @@ export function contributors(stack) {
  */
 export function levers(stack, { target = 1.33, trials = 4000 } = {}) {
   const base = analyseStack(stack, { trials });
-  const out = { base, target, uniform: null, single: [], centring: null };
+  const out = { base, target, uniform: null, single: [], centring: null, closes: true };
   if (base.capability.cpk >= target) { out.met = true; return out; }
 
   const open = (stack.links || []).filter(l => l && !l.fixed && half(l) > 0);
   const lower = base.lower, upper = base.upper;
   const mu = base.mean + (stack.shift || 0);
   const worstHalfSpace = Math.min(upper - mu, mu - lower);
+
+  // The nominal chain lands outside the requirement. No tolerance is small
+  // enough to fix that, so saying "tighten this" would be wrong advice rather
+  // than incomplete advice. Name the gap and the dimension that would close
+  // it, and stop: this is a design change, not a precision problem.
+  if (!(worstHalfSpace > 0)) {
+    const miss = mu > upper ? mu - upper : lower - mu;
+    out.closes = false;
+    out.nominal = {
+      mean: mu, lower, upper, miss,
+      note: `The nominal chain closes at ${mu.toFixed(4)} mm, which is ${miss.toFixed(4)} mm ${mu > upper ? 'above' : 'below'} the requirement. Tightening tolerances cannot reach a number the nominals never sum to: change a dimension by ${((mu > upper ? -1 : 1) * miss).toFixed(4)} mm, or check that every link's direction is right.`,
+    };
+    return out;
+  }
 
   // Uniform scaling. Cpk is linear in 1/sigma while the mean stays put, so the
   // factor is exact and needs no search.

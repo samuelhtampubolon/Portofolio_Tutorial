@@ -174,8 +174,14 @@ export function menuDefs(app, c) {
       { header: 'Check and cost' },
       c('studio.doctor'), c('studio.cost'),
       '-',
+      { header: 'Draw' },
+      c('draw.sheet'), c('draw.sheetSVG'), c('draw.sheetDXF'),
+      '-',
       { header: 'Ship' },
-      c('release.package'), c('studio.intent'),
+      c('release.package'), c('studio.intent'), c('studio.intentIn'),
+      '-',
+      { header: 'Text' },
+      c('spec.edit'), c('spec.copy'),
       '-',
       { header: 'Automate' },
       c('macro.record'), c('macro.stop'), c('macro.manage'),
@@ -188,16 +194,16 @@ export function menuDefs(app, c) {
       c('studio.section'),
       '-',
       { header: 'Fit' },
-      c('studio.clash'),
+      c('studio.clash'), c('tol.stack'), c('tol.fits'),
       '-',
       { header: 'Imported geometry' },
-      c('studio.inspect'),
+      c('studio.inspect'), c('dev.compare'),
       '-',
       { header: 'Variants' },
       c('cfg.manage'), c('cfg.add'), c('cfg.next'), c('cfg.family'),
       '-',
       { header: 'Versions' },
-      c('vcs.commit'), c('vcs.browse'), c('vcs.branch'),
+      c('vcs.commit'), c('vcs.browse'), c('vcs.branch'), c('vcs.merge'),
     ]],
 
     ['Help', () => [
@@ -259,7 +265,8 @@ export function ribbonDefs(app) {
     { label: 'Measure', items: ['measure.distance', 'measure.angle', 'measure.mass'] },
     { label: 'View', items: ['view.fit', 'view.shadingCycle', 'view.ortho', 'view.section'] },
     { label: 'Studio', items: ['studio.brief', 'studio.doctor', 'studio.cost', 'release.package'] },
-    { label: 'Analyse', items: ['studio.section', 'studio.clash', 'cfg.manage', 'vcs.commit', 'vcs.browse'] },
+    { label: 'Analyse', items: ['studio.section', 'studio.clash', 'tol.stack', 'cfg.manage', 'vcs.commit', 'vcs.browse'] },
+    { label: 'Drawing', items: ['draw.sheet', 'spec.edit', 'vcs.merge'] },
   ];
 }
 
@@ -339,7 +346,7 @@ export const SHORT_LABEL = {
 export const MENU_ICON = {
   File: 'file-new', Edit: 'undo', Create: 'box', Modify: 'union', View: 'view-iso',
   Measure: 'ruler', Draft: 'sketch', Simulate: 'timeline', Export: 'file-export',
-  Window: 'panel-left', Studio: 'workspace', Analyse: 'probe', Help: 'help',
+  Window: 'panel-left', Studio: 'workspace', Analyse: 'probe', Drawing: 'sheet', Help: 'help',
 };
 
 export { ICON_FOR };

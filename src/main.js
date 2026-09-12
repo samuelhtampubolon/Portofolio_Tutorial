@@ -43,6 +43,12 @@ import * as Cfg from './intel/configs.js';
 import * as VCS from './intel/history.js';
 import { recognise, cutterFor } from './intel/recognise.js';
 import { QUALITY, retessellate, cleanMesh, segmentsFor, unitSanity } from './intel/tessellate.js';
+import { buildSheet, sheetToSVG, sheetToDraw, scaleLabel, SHEETS, VIEWS, PROJECTIONS } from './intel/drawing.js';
+import * as Tol from './intel/tolerance.js';
+import * as Merge from './intel/merge.js';
+import * as Spec from './intel/spec.js';
+import * as Dev from './intel/deviation.js';
+import { toDXF } from './draft/dxf.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
 import { TimelineUI } from './ui/timelineui.js';
@@ -3110,6 +3116,807 @@ class App {
       if (actions[k]) { e.preventDefault(); actions[k](); return; }
       if (e.key === 'Home') { this.sim.seek(0); return; }
       if (e.key === 'End') { this.sim.seek(store.doc.sim.duration); return; }
+    });
+  }
+
+
+  /* ============================================================ drawings */
+
+  /**
+   * A shop drawing from the model.
+   *
+   * The reason this matters is that the drawing is still the contract. A
+   * supplier quotes from a dimensioned print with a title block, not from an
+   * STL, and a package that cannot produce one leaves its user to redraw their
+   * own part in something else. So the views are projected, hidden lines are
+   * classified rather than guessed at, and the title block is filled from the
+   * document instead of left as boxes to type into.
+   */
+  showDrawing() {
+    const bodies = this.analysisBodies();
+    if (!bodies.length) { this.flash('There is nothing to draw yet.', 'warn'); return; }
+
+    const opts = {
+      sheet: this._sheetOpts?.sheet || 'a3l',
+      views: this._sheetOpts?.views || ['front', 'top', 'right', 'iso'],
+      hlr: this._sheetOpts?.hlr !== false,
+      scale: this._sheetOpts?.scale || null,
+      projection: this._sheetOpts?.projection || 'first',
+    };
+    const host = el('div');
+    let sheet = null;
+
+    const draw = () => {
+      clear(host);
+      this._sheetOpts = { ...opts };
+      const t0 = performance.now();
+      try {
+        sheet = buildSheet(bodies, {
+          doc: store.doc, build: this.build, sheet: opts.sheet,
+          views: opts.views, hlr: opts.hlr, scale: opts.scale, projection: opts.projection,
+        });
+      } catch (err) {
+        host.appendChild(el('div', { class: 'banner err', text: `The drawing could not be built: ${err.message}` }));
+        return;
+      }
+      const ms = Math.round(performance.now() - t0);
+
+      host.append(
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Paper' }),
+          segmented(opts.sheet, Object.entries(SHEETS).map(([k, v]) => [k, v.label.replace(' landscape', '')]),
+            (v) => { opts.sheet = v; draw(); }),
+        ]),
+        el('div', { class: 'sheet-views' }, Object.keys(VIEWS).map(k =>
+          checkbox(VIEWS[k].label, opts.views.includes(k), (on) => {
+            opts.views = on ? [...opts.views, k] : opts.views.filter(x => x !== k);
+            if (!opts.views.length) opts.views = [k];
+            draw();
+          }))),
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Projection' }),
+          segmented(opts.projection, Object.entries(PROJECTIONS).map(([k, v]) => [k, v.label]),
+            (v) => { opts.projection = v; draw(); }),
+        ]),
+        el('div', { class: 'hint', text: PROJECTIONS[opts.projection].note }),
+        checkbox('Remove hidden lines', opts.hlr, (v) => { opts.hlr = v; draw(); },
+          { hint: 'Off draws every edge, which is faster and sometimes clearer on a simple part.' }),
+        el('div', { class: 'sheet-view', html: sheetToSVG(sheet, { dark: document.documentElement.dataset.theme !== 'light' }) }),
+        el('div', { class: 'hint', text:
+          `${sheet.views.length} view${sheet.views.length === 1 ? '' : 's'} at ${scaleLabel(sheet.scale)} on ${sheet.paper.w} × ${sheet.paper.h} mm, ` +
+          `${sheet.views.reduce((n, v) => n + v.segs.length, 0)} edges and ${sheet.views.reduce((n, v) => n + v.circles.length, 0)} circles, built in ${ms} ms.` }),
+        el('div', { class: 'banner warn', text: 'Dimensions are the overall extents of each view and the diameters of the holes the recogniser found, which is a starting drawing rather than a finished one: datums, geometric tolerance and anything a functional surface needs are still yours to add.' }),
+      );
+    };
+    draw();
+
+    modal({
+      title: 'Shop drawing', icon: 'sheet', wide: true, size: 'tall',
+      subtitle: `${store.doc.meta.name} · ${bodies.length} bod${bodies.length === 1 ? 'y' : 'ies'}`,
+      body: host,
+      actions: [
+        { label: 'Save SVG', run: () => { this.exportSheet('svg', sheet); return true; } },
+        { label: 'Save DXF', run: () => { this.exportSheet('dxf', sheet); return true; } },
+        { label: 'Close', primary: true },
+      ],
+    });
+  }
+
+  /** Write the current sheet out, building one first if the dialog never ran. */
+  exportSheet(kind, prebuilt = null) {
+    const bodies = this.analysisBodies();
+    if (!bodies.length) { this.flash('There is nothing to draw yet.', 'warn'); return; }
+    let sheet = prebuilt;
+    if (!sheet) {
+      const o = this._sheetOpts || {};
+      try {
+        sheet = buildSheet(bodies, {
+          doc: store.doc, build: this.build,
+          sheet: o.sheet || 'a3l', views: o.views || ['front', 'top', 'right', 'iso'],
+          hlr: o.hlr !== false, scale: o.scale || null, projection: o.projection || 'first',
+        });
+      } catch (err) { this.flash(`The drawing could not be built: ${err.message}`, 'err'); return; }
+    }
+    const name = store.doc.meta.name || 'drawing';
+    if (kind === 'svg') {
+      IO.download(IO.safeName(`${name}-drawing`, '.svg'), sheetToSVG(sheet), 'image/svg+xml');
+    } else {
+      IO.download(IO.safeName(`${name}-drawing`, '.dxf'), toDXF(sheetToDraw(sheet), { units: 'mm' }), 'image/vnd.dxf');
+    }
+    this.flash(`Drawing saved as ${kind.toUpperCase()} at ${scaleLabel(sheet.scale)}.`, 'ok');
+  }
+
+
+  /* ========================================================== tolerances */
+
+  /**
+   * Tolerance stack-up.
+   *
+   * The dialog shows all three answers side by side on purpose. Worst case is
+   * what a drawing promises and is almost always too pessimistic to build to;
+   * root sum square is what a production run actually does; Monte Carlo shows
+   * whether the failures pile against one limit or spread evenly. Quoting one
+   * of the three without the others is how a stack-up spreadsheet misleads.
+   */
+  showTolerance() {
+    const bodies = this.analysisBodies();
+    const limits = Studio.limits(processOf(this.processId()));
+    if (!store.doc.stacks?.length) {
+      store.doc.stacks = [Tol.stackFromBuild(bodies, { axis: 'x', limits, process: this.processId() })];
+    }
+    let which = 0;
+    let target = 1.33;
+    const host = el('div');
+
+    const commit = (label) => { store.commit(label); };
+
+    const draw = () => {
+      clear(host);
+      const stacks = store.doc.stacks;
+      const stack = stacks[Math.min(which, stacks.length - 1)];
+      const a = Tol.analyseStack(stack);
+      const lv = Tol.levers(stack, { target });
+
+      if (stacks.length > 1) {
+        host.appendChild(el('div', { class: 'row wide' }, [
+          el('label', { text: 'Stack' }),
+          select(String(which), stacks.map((s, i) => [String(i), s.name]), (v) => { which = Number(v); draw(); }),
+        ]));
+      }
+
+      /* --- the requirement --- */
+      host.appendChild(section('The requirement', [
+        field('Name', (() => {
+          const i = el('input', { type: 'text', value: stack.requirement });
+          i.addEventListener('change', () => { stack.requirement = i.value; commit('Rename requirement'); });
+          return i;
+        })()),
+        numRow('Lower limit (mm)', stack.lower, (v) => { stack.lower = v; commit('Stack limit'); draw(); }),
+        numRow('Upper limit (mm)', stack.upper, (v) => { stack.upper = v; commit('Stack limit'); draw(); }),
+        numRow('Mean shift allowance (mm)', stack.shift || 0, (v) => { stack.shift = v; commit('Stack shift'); draw(); }),
+        el('div', { class: 'hint', text: 'The shift allowance is for a process that drifts off centre over a run. Leave it at zero unless you have evidence for a number.' }),
+      ], true, { icon: 'target' }));
+
+      /* --- the chain --- */
+      const rows = stack.links.map((l, i) => {
+        const c = a.contributors.find(x => x.id === l.id);
+        const nom = el('input', { type: 'number', step: 'any', value: String(l.nominal), class: 'stk-num' });
+        nom.addEventListener('input', () => { const n = Number(nom.value); if (Number.isFinite(n)) { l.nominal = n; commit('Stack nominal'); draw(); } });
+        const tol = el('input', { type: 'number', step: 'any', min: '0', value: String((Math.abs(l.plus) + Math.abs(l.minus)) / 2), class: 'stk-num' });
+        tol.addEventListener('input', () => { const n = Math.abs(Number(tol.value)); if (Number.isFinite(n)) { l.plus = l.minus = n; commit('Stack tolerance'); draw(); } });
+        const dirBtn = el('button', { class: 'btn tiny', text: l.dir >= 0 ? '+' : '−', title: 'Which way this dimension pushes the gap' });
+        dirBtn.addEventListener('click', () => { l.dir = l.dir >= 0 ? -1 : 1; commit('Stack direction'); draw(); });
+        const del = el('button', { class: 'btn tiny danger', text: '✕', title: 'Remove this link' });
+        del.addEventListener('click', () => { stack.links = stack.links.filter(x => x.id !== l.id); commit('Remove stack link'); draw(); });
+        const lock = el('button', { class: `btn tiny${l.fixed ? ' on' : ''}`, text: l.fixed ? '🔒' : '🔓', title: l.fixed ? 'Fixed: a supplier part or a standard. Not available to tighten.' : 'Open to tightening' });
+        lock.addEventListener('click', () => { l.fixed = !l.fixed; commit('Stack lock'); draw(); });
+
+        const name = el('input', { type: 'text', value: l.label, class: 'stk-name' });
+        name.addEventListener('change', () => { l.label = name.value; commit('Rename stack link'); draw(); });
+
+        return el('div', { class: 'stk-row' }, [
+          dirBtn, name, nom,
+          el('span', { class: 'stk-pm', text: '±' }), tol,
+          select(l.dist, Object.entries(Tol.DISTRIBUTIONS).map(([k, v]) => [k, v.label]),
+            (v) => { l.dist = v; commit('Stack distribution'); draw(); }),
+          el('div', { class: 'stk-bar', title: `${((c?.varianceShare || 0) * 100).toFixed(1)}% of the total variance` }, [
+            el('div', { class: 'stk-fill', style: `width:${((c?.varianceShare || 0) * 100).toFixed(1)}%` }),
+          ]),
+          el('span', { class: 'stk-share', text: `${((c?.varianceShare || 0) * 100).toFixed(0)}%` }),
+          lock, del,
+        ]);
+      });
+      const addBtn = el('button', { class: 'btn', text: '+ Add a link' });
+      addBtn.addEventListener('click', () => {
+        stack.links.push(Tol.makeLink({ label: `Dimension ${stack.links.length + 1}`, plus: limits.tolerance, minus: limits.tolerance }));
+        commit('Add stack link'); draw();
+      });
+      const fromModel = el('button', { class: 'btn', text: 'Rebuild from the model' });
+      fromModel.addEventListener('click', () => {
+        const s = Tol.stackFromBuild(bodies, { axis: 'x', limits, process: this.processId() });
+        stack.links = s.links; commit('Stack from model'); draw();
+      });
+
+      host.appendChild(section(`The chain · ${stack.links.length} link${stack.links.length === 1 ? '' : 's'}`, [
+        el('div', { class: 'stk-head' }, [
+          el('span', { text: '±' }), el('span', { text: 'Dimension' }), el('span', { text: 'Nominal' }),
+          el('span', { text: '' }), el('span', { text: 'Tolerance' }), el('span', { text: 'Distribution' }),
+          el('span', { text: 'Share of variance' }), el('span', { text: '' }), el('span', { text: '' }), el('span', { text: '' }),
+        ]),
+        ...rows,
+        el('div', { class: 'row' }, [addBtn, fromModel]),
+        el('div', { class: 'hint', text: 'The ± button sets which way a dimension pushes the gap: a shaft length adds to the stack, a bore depth subtracts from it. The lock marks a dimension you cannot change, such as a bought-in bearing, so the advice below never suggests tightening it.' }),
+      ], true, { icon: 'sequence' }));
+
+      /* --- the three answers --- */
+      const band = (min, max, fits) => el('div', { class: `stk-verdict ${fits ? 'ok' : 'bad'}` }, [
+        el('strong', { text: `${fmt(min, 4)} to ${fmt(max, 4)} mm` }),
+        el('span', { text: fits ? 'inside the requirement' : 'outside the requirement' }),
+      ]);
+      host.appendChild(section('What the chain does', [
+        el('div', { class: 'stk-answers' }, [
+          el('div', { class: 'stk-answer' }, [
+            el('h4', { text: 'Worst case' }), band(a.worst.min, a.worst.max, a.worst.fits),
+            el('div', { class: 'hint', text: `Uses ${(a.worst.used * 100).toFixed(0)}% of the requirement. This is the arithmetic a drawing promises, and it assumes every part is at its worst limit at once.` }),
+          ]),
+          el('div', { class: 'stk-answer' }, [
+            el('h4', { text: 'Root sum square' }), band(a.rss.min, a.rss.max, a.rss.fits),
+            el('div', { class: 'hint', text: `σ = ${fmt(a.rss.sigma, 5)} mm. What a run of parts really does, if the processes are centred and independent.` }),
+          ]),
+          el('div', { class: 'stk-answer' }, [
+            el('h4', { text: 'Monte Carlo' }), band(a.mc.p1, a.mc.p99, a.mc.failures === 0),
+            el('div', { class: 'hint', text: `${a.mc.trials.toLocaleString()} assemblies sampled, ${a.mc.failures} outside spec (${Math.round(a.mc.ppm)} ppm). 1st to 99th percentile shown.` }),
+          ]),
+        ]),
+        el('div', { class: `banner ${a.verdict.severity === 'ok' ? 'ok' : a.verdict.severity === 'warn' ? 'warn' : 'err'}`, text:
+          `Cp ${a.capability.cp.toFixed(2)}, Cpk ${a.capability.cpk.toFixed(2)}. ${a.verdict.label}. ` +
+          `About ${Math.round(a.capability.ppm)} parts per million will not assemble.` }),
+        el('div', { class: 'hint', text: a.capability.centred
+          ? 'Cp and Cpk agree, so the chain is aimed at the middle of its requirement.'
+          : 'Cp is well above Cpk, which means the chain is tight enough but aimed off centre. Moving a nominal is cheaper than buying tolerance.' }),
+      ], true, { icon: 'gauge' }));
+
+      /* --- what to change --- */
+      const advice = [];
+      advice.push(el('div', { class: 'row wide' }, [
+        el('label', { text: 'Target Cpk' }),
+        segmented(String(target), [['1', '1.00'], ['1.33', '1.33'], ['1.67', '1.67'], ['2', '2.00']],
+          (v) => { target = Number(v); draw(); }),
+      ]));
+      if (lv.met) {
+        advice.push(el('div', { class: 'banner ok', text: `The chain already meets Cpk ${target}. Nothing to change.` }));
+      } else if (!lv.closes) {
+        // The nominals miss the requirement. Tolerance advice would be wrong
+        // here, not merely unhelpful, so the dialog says what is actually wrong.
+        advice.push(el('div', { class: 'banner err', text: lv.nominal.note }));
+        const centreIt = el('button', { class: 'btn', text: `Move the requirement to ${fmt(lv.nominal.mean - (a.upper - a.lower) / 2, 4)} … ${fmt(lv.nominal.mean + (a.upper - a.lower) / 2, 4)} mm` });
+        centreIt.addEventListener('click', () => {
+          const width = (stack.upper - stack.lower) / 2;
+          stack.lower = lv.nominal.mean - width;
+          stack.upper = lv.nominal.mean + width;
+          commit('Recentre the requirement'); draw();
+        });
+        advice.push(el('div', { class: 'dx-item' }, [centreIt,
+          el('div', { class: 'hint', text: 'Only if the requirement was the thing entered wrongly. If the requirement is real, a dimension has to move instead.' })]));
+      } else {
+        if (lv.centring) advice.push(el('div', { class: 'banner warn', text: `${lv.centring.note} Move a nominal by ${fmt(lv.centring.move, 4)} mm.` }));
+        if (lv.uniform?.possible) {
+          const apply = el('button', { class: 'btn', text: `Scale every open tolerance by ×${lv.uniform.factor.toFixed(3)}` });
+          apply.addEventListener('click', () => {
+            for (const l of stack.links) if (!l.fixed) { l.plus *= lv.uniform.factor; l.minus *= lv.uniform.factor; }
+            commit('Tighten the stack'); draw();
+          });
+          advice.push(el('div', { class: 'dx-item' }, [apply,
+            el('div', { class: 'hint', text: 'Spreads the cost across every operation. Simple, and usually the most expensive option.' })]));
+        } else if (lv.uniform) {
+          advice.push(el('div', { class: 'banner err', text: lv.uniform.note }));
+        }
+        for (const one of lv.single.filter(x => x.enough).slice(0, 3)) {
+          const b = el('button', { class: 'btn', text: `${one.label}: ±${fmt(one.from, 4)} → ±${fmt(one.to, 4)}` });
+          b.addEventListener('click', () => {
+            const l = stack.links.find(x => x.id === one.id);
+            if (l) { l.plus = l.minus = one.to; commit('Tighten one link'); draw(); }
+          });
+          advice.push(el('div', { class: 'dx-item' }, [b,
+            el('div', { class: 'hint', text: 'One tighter operation instead of five. This is what a shop would actually quote.' })]));
+        }
+        if (!lv.single.some(x => x.enough)) {
+          advice.push(el('div', { class: 'banner err', text: 'No single link can absorb the shortfall on its own. The chain needs fewer links, not tighter ones: that means a design change, such as machining two surfaces in one setup so they share a datum.' }));
+        }
+        const alloc = Tol.allocate(stack, { method: 'proportional', target });
+        if (alloc.some(x => x.tol != null)) {
+          const b = el('button', { class: 'btn', text: 'Allocate from the requirement backwards' });
+          b.addEventListener('click', () => {
+            alloc.forEach(x => { const l = stack.links.find(y => y.id === x.id); if (l && x.tol != null) l.plus = l.minus = x.tol; });
+            commit('Allocate tolerances'); draw();
+          });
+          advice.push(el('div', { class: 'dx-item' }, [b,
+            el('div', { class: 'hint', text: `Sizes every band from the requirement, scaled with the dimension: ${alloc.filter(x => x.tol != null).map(x => `${x.label} ±${fmt(x.tol, 4)}`).join(', ')}.` })]));
+        }
+      }
+      host.appendChild(section('What to change', advice, true, { icon: 'bulb' }));
+      host.appendChild(el('div', { class: 'banner warn', text: 'Independent, normally distributed processes are assumed unless a link says otherwise. Real machining has correlated errors from a shared fixture and a shared operator, which this cannot see. Treat the ppm figure as an order of magnitude.' }));
+    };
+    draw();
+
+    modal({
+      title: 'Tolerance stack-up', icon: 'ruler', wide: true, size: 'tall',
+      subtitle: store.doc.meta.name,
+      body: host,
+      actions: [
+        { label: 'New stack', run: () => {
+          store.doc.stacks.push(Tol.emptyStack({ name: `Stack ${store.doc.stacks.length + 1}` }));
+          which = store.doc.stacks.length - 1;
+          store.commit('New stack');
+          // Reopening rebuilds the dialog around the new stack; returning falsy
+          // lets the old one close underneath it.
+          setTimeout(() => this.showTolerance(), 0);
+        } },
+        { label: 'Close', primary: true },
+      ],
+    });
+  }
+
+  /**
+   * ISO 286 fits, resolved at a real size.
+   *
+   * A fit table is one of those references everybody looks up and nobody
+   * remembers, and looking it up in a PDF gives deviations in micrometres that
+   * still have to be added to a nominal by hand. Here the nominal is the one
+   * the model uses, and the answer is the clearance in millimetres.
+   */
+  showFits() {
+    let D = 25;
+    const sel = [...this.selection][0];
+    const holes = sel ? this.holesOf(sel) : [];
+    if (holes.length) D = Number(holes[0].diameter.toFixed(3));
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      const table = Tol.fitTable(D);
+      if (!table.length) {
+        host.appendChild(el('div', { class: 'banner warn', text: `ISO 286 is tabulated to 500 mm. ${fmt(D)} mm is outside it, so there is no standard answer to give.` }));
+        return;
+      }
+      host.append(
+        el('div', { class: 'row wide' }, [el('label', { text: 'Nominal size (mm)' }),
+          (() => {
+            const i = el('input', { type: 'number', step: 'any', min: '0.1', value: String(D) });
+            i.addEventListener('input', () => { const n = Number(i.value); if (n > 0) { D = n; draw(); } });
+            return i;
+          })()]),
+        el('div', { class: 'fit-table' }, [
+          el('div', { class: 'fit-head' }, ['Fit', 'What it is for', 'Hole', 'Shaft', 'Clearance'].map(t => el('span', { text: t }))),
+          ...table.map(f => el('div', { class: `fit-row ${f.kind}` }, [
+            el('strong', { text: f.name }),
+            el('span', { class: 'fit-note' }, [
+              el('b', { text: f.named?.label || f.kind }),
+              el('small', { text: f.named?.note || '' }),
+            ]),
+            el('span', { class: 'mono', text: `${f.hole.upper >= 0 ? '+' : ''}${f.hole.upper.toFixed(3)} / ${f.hole.lower >= 0 ? '+' : ''}${f.hole.lower.toFixed(3)}` }),
+            el('span', { class: 'mono', text: `${f.shaft.upper >= 0 ? '+' : ''}${f.shaft.upper.toFixed(3)} / ${f.shaft.lower >= 0 ? '+' : ''}${f.shaft.lower.toFixed(3)}` }),
+            el('span', { class: 'mono', text: f.kind === 'interference'
+              ? `${Math.abs(f.maxClearance).toFixed(3)} to ${Math.abs(f.minClearance).toFixed(3)} tight`
+              : `${f.minClearance.toFixed(3)} to ${f.maxClearance.toFixed(3)}` }),
+          ])),
+        ]),
+        el('div', { class: 'hint', text: `IT6 at this size is ${fmt(Tol.itGrade(6, D) * 1000, 0)} µm, IT7 ${fmt(Tol.itGrade(7, D) * 1000, 0)} µm, IT11 ${fmt(Tol.itGrade(11, D) * 1000, 0)} µm. Grades widen with size, which is why a fit is a letter and a grade rather than a number.` }),
+        el('div', { class: 'banner warn', text: 'Hole-basis fits: the hole is the H member and the shaft carries the deviation, because a reamer or a drill is a fixed size and a shaft can be turned to anything. Values are the published ISO 286-1 tables, exact, not interpolated.' }),
+      );
+      if (holes.length) {
+        host.appendChild(el('div', { class: 'hint', text: `The selected body has ${holes.length} recognised hole${holes.length === 1 ? '' : 's'}; the largest is ${fmt(holes[0].diameter, 3)} mm.` }));
+      }
+    };
+    draw();
+
+    modal({
+      title: 'Fits and limits', icon: 'target', wide: true,
+      subtitle: 'ISO 286 hole basis',
+      body: host,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  /** Recognised holes on one body, or an empty list when it has none. */
+  holesOf(featureId) {
+    const b = this.analysisBodies().find(x => x.feature.id === featureId);
+    if (!b) return [];
+    try { return recognise(b.geometry, b.matrix).holes || []; } catch { return []; }
+  }
+
+  /** The process the document is being made by, matching the Doctor's choice. */
+  processId() {
+    return store.doc.studio?.process || Studio.standards().process;
+  }
+
+
+  /* ====================================================== design as code */
+
+  /**
+   * The document as editable text.
+   *
+   * Two things make this more than a novelty. The spec is generated from the
+   * live document, so it is never stale; and applying an edit goes through a
+   * review that names what would change before anything does, because text is
+   * a sharp enough tool to delete half a model with one keystroke.
+   */
+  showSpec() {
+    const current = Spec.toSpec(store.doc);
+    const area = el('textarea', { class: 'spec-edit', spellcheck: 'false', rows: '22' });
+    area.value = current.text;
+    const statusLine = el('div', { class: 'hint' });
+    const diffHost = el('div');
+
+    const review = () => {
+      const r = Spec.reviewSpec(area.value, store.doc);
+      clear(diffHost);
+      statusLine.textContent = '';
+
+      if (!r.ok) {
+        statusLine.textContent = r.summary;
+        diffHost.appendChild(el('div', { class: 'banner err', text: `${r.errors.length} error${r.errors.length === 1 ? '' : 's'}. Nothing will be applied until they are fixed.` }));
+        for (const e of r.errors.slice(0, 12)) {
+          diffHost.appendChild(el('div', { class: 'spec-err' }, [
+            el('span', { class: 'spec-line', text: e.line ? `line ${e.line}` : 'document' }),
+            el('span', { text: e.message }),
+            e.text ? el('code', { text: e.text }) : el('span'),
+          ]));
+        }
+        return r;
+      }
+
+      statusLine.textContent = r.summary;
+      const parts = [];
+      if (r.added.length) parts.push(el('div', { class: 'diff-row added', text: `Added: ${r.added.join(', ')}` }));
+      if (r.removed.length) parts.push(el('div', { class: 'diff-row removed', text: `Removed: ${r.removed.join(', ')}` }));
+      if (r.changed.length) parts.push(el('div', { class: 'diff-row changed', text: `Changed: ${r.changed.join(', ')}` }));
+      if (!parts.length && r.diff.empty) parts.push(el('div', { class: 'hint', text: 'No change yet. Edit the text above and the effect appears here before it is applied.' }));
+
+      for (const h of Spec.hunks(r.diff, 2)) {
+        parts.push(el('div', { class: 'spec-hunk' }, h.rows.map(row =>
+          el('div', { class: `spec-drow ${row.kind}` }, [
+            el('span', { class: 'spec-sign', text: row.kind === 'added' ? '+' : row.kind === 'removed' ? '−' : ' ' }),
+            el('code', { text: row.text || ' ' }),
+          ]))));
+      }
+      for (const w of r.warnings.slice(0, 8)) {
+        parts.push(el('div', { class: 'dx-item warn', text: w.line ? `Line ${w.line}: ${w.message}` : w.message }));
+      }
+      clear(diffHost);
+      parts.forEach(p => diffHost.appendChild(p));
+      return r;
+    };
+
+    let timer = null;
+    area.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(review, 220); });
+    review();
+
+    const body = el('div', {}, [
+      el('p', { class: 'hint', text: 'This text is the document, not a copy of it. Editing the model rewrites the text; applying the text rewrites the model. Parameters are referenced by name, so changing one value moves everything that depends on it.' }),
+      area,
+      statusLine,
+      section('What this would do', [diffHost], true, { icon: 'sequence' }),
+      el('div', { class: 'banner warn', text: current.lossy.length
+        ? `${current.lossy.length} item${current.lossy.length === 1 ? '' : 's'} cannot be written as text and stay attached to the document instead: ${current.lossy.map(l => `${l.feature} (${l.what})`).join(', ')}. They survive the round trip; they are simply not editable here.`
+        : 'Everything in this document round trips through the text, which the app checks rather than assumes.' }),
+    ]);
+
+    modal({
+      title: 'Design as code', icon: 'code', wide: true, size: 'tall',
+      subtitle: `${store.doc.meta.name} · spec v${Spec.SPEC_VERSION}`,
+      body,
+      actions: [
+        // A truthy return keeps the dialog open, which is what the editing
+        // actions want and what a rejected Apply wants.
+        { label: 'Tidy up', run: () => { area.value = Spec.format(area.value); review(); return true; } },
+        { label: 'Copy', run: () => { this.copyText(area.value, 'Spec copied.'); return true; } },
+        { label: 'Apply', primary: true, run: () => {
+          const r = Spec.reviewSpec(area.value, store.doc);
+          if (!r.ok) { this.flash(`${r.errors.length} error${r.errors.length === 1 ? '' : 's'} in the spec. Nothing applied.`, 'err'); return true; }
+          if (r.diff.empty) { this.flash('The text matches the model already.', 'info'); return false; }
+          store.batch('Apply the spec', () => {
+            const d = store.doc;
+            d.meta = { ...d.meta, ...r.doc.meta };
+            d.params = r.doc.params;
+            d.features = r.doc.features;
+          });
+          this.selection.clear();
+          this.rebuildNow();
+          this.flash(`Spec applied: ${r.summary}.`, 'ok');
+          return false;
+        } },
+        { label: 'Cancel' },
+      ],
+    });
+  }
+
+  copySpec() {
+    this.copyText(Spec.toSpec(store.doc).text, 'Spec copied to the clipboard.');
+  }
+
+  copyText(text, note) {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => this.flash(note, 'ok')).catch(() => this.flash('The browser refused clipboard access.', 'warn'));
+    } else {
+      this.flash('This browser has no clipboard API. Select the text and copy it manually.', 'warn');
+    }
+  }
+
+  /* ============================================================== merge */
+
+  /** How many branches the local version store holds. */
+  branchCount() {
+    try { return VCS.branches().length; } catch { return 1; }
+  }
+
+  /**
+   * Merge another branch into this document.
+   *
+   * A three-way merge needs a common ancestor, and this is the one place the
+   * app has to be honest about not having one: two branches with no shared
+   * snapshot cannot be merged safely, and saying so is better than merging
+   * them badly.
+   */
+  showMerge() {
+    const here = VCS.currentBranch();
+    const others = VCS.branches().filter(b => b.name !== here);
+    if (!others.length) { this.flash('There is only one branch. Create one from the Versions menu first.', 'warn'); return; }
+
+    let target = others[0].name;
+    let policy = 'ours';
+    let result = null;
+    const picks = {};
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      const mine = VCS.versions({ branch: here });
+      const theirs = VCS.versions({ branch: target });
+      const baseMeta = Merge.commonAncestor(mine, theirs);
+
+      host.appendChild(el('div', { class: 'row wide' }, [
+        el('label', { text: 'Bring in' }),
+        select(target, others.map(b => [b.name, `${b.name} · ${b.count} version${b.count === 1 ? '' : 's'}`]),
+          (v) => { target = v; Object.keys(picks).forEach(k => delete picks[k]); draw(); }),
+      ]));
+
+      if (!baseMeta) {
+        host.appendChild(el('div', { class: 'banner err', text: `"${here}" and "${target}" share no saved version, so there is no common ancestor to merge from. A three-way merge without one is guesswork. Save a version on both branches from the same starting point, or restore one branch's version and continue from there.` }));
+        return;
+      }
+      const base = VCS.getVersion(baseMeta.id, { branch: here })?.doc;
+      const head = VCS.getVersion(theirs[0].id, { branch: target })?.doc;
+      if (!base || !head) {
+        host.appendChild(el('div', { class: 'banner err', text: 'That branch\'s snapshots could not be read back from local storage.' }));
+        return;
+      }
+
+      result = Merge.mergeDocuments(base, store.doc, head, { policy });
+      const resolved = Merge.resolve(result, picks);
+      const sum = Merge.mergeSummary(resolved);
+
+      host.append(
+        el('div', { class: 'hint', text: `Common ancestor: "${baseMeta.message || baseMeta.id}" from ${new Date(baseMeta.at).toLocaleString()}. Merging ${theirs[0].message || 'the latest version'} of "${target}" into the document open now.` }),
+        el('div', { class: `banner ${sum.clean ? 'ok' : 'warn'}`, text: sum.headline }),
+        el('div', { class: 'merge-stats' }, [
+          el('div', { class: 'big-stat' }, [el('strong', { text: String(resolved.stats.features) }), el('span', { text: 'features after' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: String(resolved.stats.fromTheirs) }), el('span', { text: 'brought in' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: String(resolved.stats.deleted) }), el('span', { text: 'removed' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: String(resolved.conflicts.length) }), el('span', { text: 'conflicts' })]),
+        ]),
+      );
+
+      if (resolved.conflicts.length) {
+        host.appendChild(section(`Conflicts · ${resolved.conflicts.filter(c => !c.pick).length} still open`,
+          resolved.conflicts.map(c => {
+            const show = (v) => v == null ? 'deleted' : Array.isArray(v) ? (v.length && typeof v[0] === 'object' ? `${v.length} items` : `[${v.join(', ')}]`) : typeof v === 'object' ? (v.name || 'changed') : String(v);
+            const mineBtn = el('button', { class: `btn tiny${picks[c.id] === 'ours' ? ' on' : ''}`, text: `Keep: ${show(c.ours)}` });
+            const theirsBtn = el('button', { class: `btn tiny${picks[c.id] === 'theirs' ? ' on' : ''}`, text: `Take: ${show(c.theirs)}` });
+            mineBtn.addEventListener('click', () => { picks[c.id] = 'ours'; draw(); });
+            theirsBtn.addEventListener('click', () => { picks[c.id] = 'theirs'; draw(); });
+            return el('div', { class: `mg-conflict${picks[c.id] ? ' done' : ''}` }, [
+              el('div', { class: 'mg-label' }, [
+                el('strong', { text: c.label }),
+                el('small', { text: c.note || `${c.kind} conflict` }),
+              ]),
+              el('div', { class: 'mg-pick' }, [mineBtn, theirsBtn]),
+            ]);
+          }), true, { icon: 'warning' }));
+        host.appendChild(el('div', { class: 'hint', text: 'Nothing is averaged and nothing is guessed. Every conflict is a value two people chose deliberately, so it is a question rather than a calculation. Unanswered ones fall back to the side below.' }));
+        host.appendChild(el('div', { class: 'row wide' }, [
+          el('label', { text: 'Unanswered conflicts keep' }),
+          segmented(policy, [['ours', 'this document'], ['theirs', `"${target}"`]], (v) => { policy = v; draw(); }),
+        ]));
+      }
+
+      const d = VCS.diff(store.doc, resolved.merged);
+      host.appendChild(section('What the document would become', [
+        d.empty ? el('div', { class: 'hint', text: 'The merge changes nothing here: this branch already contains everything the other one has.' })
+          : el('div', {}, [
+            ...d.features.slice(0, 30).map(f => el('div', { class: `diff-row ${f.kind}` }, [
+              el('span', { class: 'diff-badge', text: f.kind }),
+              el('span', { class: 'diff-feature', text: f.name }),
+              el('small', { text: f.changes.map(c => `${c.what} ${c.from} → ${c.to}`).join(', ') }),
+            ])),
+            ...d.params.map(p => el('div', { class: `diff-row ${p.kind}` }, [
+              el('span', { class: 'diff-badge', text: 'param' }),
+              el('span', { class: 'diff-feature', text: p.name }),
+              el('small', { text: p.kind === 'changed' ? `${p.from} → ${p.to}` : String(p.to ?? p.from) }),
+            ])),
+          ]),
+      ], true, { icon: 'sequence' }));
+    };
+    draw();
+
+    modal({
+      title: 'Merge a branch', icon: 'merge', wide: true, size: 'tall',
+      subtitle: `into "${here}"`,
+      body: host,
+      actions: [
+        { label: 'Merge', primary: true, run: () => {
+          if (!result) { this.flash('There is nothing to merge.', 'warn'); return true; }
+          const resolved = Merge.resolve(result, picks);
+          const open = resolved.conflicts.filter(c => !c.pick).length;
+          // One batch, so the whole merge is one undo step. That is what makes
+          // it safe to merge with conflicts outstanding: Ctrl+Z puts it back.
+          store.batch(`Merge "${target}"`, () => {
+            const d = store.doc;
+            d.meta = resolved.merged.meta;
+            d.params = resolved.merged.params;
+            d.features = resolved.merged.features;
+            d.draw = resolved.merged.draw;
+            if (resolved.merged.configs) d.configs = resolved.merged.configs;
+          });
+          this.selection.clear();
+          this.rebuildNow();
+          this.flash(open
+            ? `Merged "${target}" with ${open} conflict${open === 1 ? '' : 's'} left to ${policy === 'ours' ? 'this document' : `"${target}"`}. Undo puts it back.`
+            : `Merged "${target}": ${resolved.stats.fromTheirs} brought in, no conflicts.`, open ? 'warn' : 'ok');
+        } },
+        { label: 'Cancel' },
+      ],
+    });
+  }
+
+
+  /* ========================================================== deviation */
+
+  /**
+   * Compare an imported mesh against the parametric model.
+   *
+   * This is the question a supplier STL or a scan actually raises: is this my
+   * part? A file size cannot answer it and a visual overlay only answers it
+   * when the difference is large. A signed distance from every sampled point
+   * to the nearest surface answers it with a number, and the shape of the
+   * histogram says what kind of difference it is.
+   */
+  showDeviation() {
+    const bodies = this.analysisBodies();
+    const meshes = bodies.filter(b => b.feature.type === 'mesh');
+    const models = bodies.filter(b => b.feature.type !== 'mesh');
+    if (!meshes.length) { this.flash('Import a mesh first: this compares an incoming file against the model.', 'warn'); return; }
+    if (!models.length) { this.flash('There is no parametric body to compare against.', 'warn'); return; }
+
+    let candidate = meshes[0].feature.id;
+    let tolerance = null;
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      const can = meshes.filter(b => b.feature.id === candidate);
+      const ref = models;
+
+      host.appendChild(el('div', { class: 'row wide' }, [
+        el('label', { text: 'Incoming mesh' }),
+        select(candidate, meshes.map(b => [b.feature.id, b.feature.name]), (v) => { candidate = v; draw(); }),
+      ]));
+
+      const t0 = performance.now();
+      const map = Dev.deviationMap(can, ref, { maxSamples: 6000, tolerance });
+      const ms = Math.round(performance.now() - t0);
+      if (!map.ok) { host.appendChild(el('div', { class: 'banner err', text: map.reason })); return; }
+
+      const sev = map.verdict.severity === 'ok' ? 'ok' : map.verdict.severity === 'warn' ? 'warn' : 'err';
+      const peak = Math.max(map.p95, map.tolerance, 1e-6);
+      const maxBin = Math.max(...map.histogram.map(b => b.count), 1);
+
+      host.append(
+        el('div', { class: `banner ${sev}`, text: map.verdict.label }),
+        el('div', { class: 'merge-stats' }, [
+          el('div', { class: 'big-stat' }, [el('strong', { text: `${fmt(map.max, 4)}` }), el('span', { text: 'peak mm' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: `${fmt(map.rms, 4)}` }), el('span', { text: 'RMS mm' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: `${fmt(map.p95, 4)}` }), el('span', { text: '95% within' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: `${(map.outsideFraction * 100).toFixed(1)}%` }), el('span', { text: 'outside tolerance' })]),
+        ]),
+        section('Where the difference sits', [
+          el('div', { class: 'dv-hist' }, map.histogram.map(b => el('div', {
+            class: `dv-bin ${b.to <= -map.tolerance ? 'under' : b.from >= map.tolerance ? 'over' : 'inside'}`,
+            style: `height:${Math.max(1, (b.count / maxBin) * 100).toFixed(1)}%`,
+            title: `${fmt(b.from, 4)} to ${fmt(b.to, 4)} mm: ${b.count} samples`,
+          }))),
+          el('div', { class: 'dv-axis' }, [
+            el('span', { text: `${fmt(map.histogram[0].from, 3)} mm` }),
+            el('span', { text: '0' }),
+            el('span', { text: `${fmt(map.histogram.at(-1).to, 3)} mm` }),
+          ]),
+          el('div', { class: 'hint', text: 'Negative is inside the model, positive is outside it. A symmetric spread around zero is tessellation. One tall bar off centre is a moved or mis-sized feature. Two separated humps usually mean a fillet or a chamfer that is present in one and not the other.' }),
+        ], true, { icon: 'deviation' }),
+        section('Measurement', [kv([
+          ['Samples', `${map.samples.toLocaleString()} points in ${ms} ms`],
+          ['Incoming triangles', map.candidateTriangles.toLocaleString()],
+          ['Model triangles', map.referenceTriangles.toLocaleString()],
+          ['Tolerance band', `±${fmt(map.tolerance, 4)} mm`],
+          ['Size ratio', `${map.scale.toFixed(4)}×`],
+          ['Position offset', `${fmt(map.offset, 4)} mm (${map.offsetVector.map(v => fmt(v, 2)).join(', ')})`],
+          ['Median deviation', `${fmt(map.p50, 4)} mm`],
+          ['99th percentile', `${fmt(map.p99, 4)} mm`],
+          ['Worst point', map.worstPoint ? map.worstPoint.map(v => fmt(v, 2)).join(', ') : '—'],
+        ])], true, { icon: 'probe' }),
+        (() => {
+          const i = el('input', { type: 'number', step: 'any', min: '0', value: String(fmt(map.tolerance, 4)) });
+          i.addEventListener('change', () => { const n = Number(i.value); tolerance = n > 0 ? n : null; draw(); });
+          return el('div', { class: 'row wide' }, [el('label', { text: 'Tolerance band (mm)' }), i]);
+        })(),
+        el('div', { class: 'banner warn', text: 'Distances are exact point-to-triangle, measured from the incoming mesh to the model. Sampling is capped, so the peak is the worst of what was sampled rather than the worst that exists; raise it by importing a coarser mesh or lower it by trusting the RMS over the peak. Nothing here registers the two shapes together: if the offset above is not near zero, fix that first.' }),
+      );
+      void peak;
+    };
+    draw();
+
+    modal({
+      title: 'Compare with a mesh', icon: 'deviation', wide: true, size: 'tall',
+      subtitle: `${meshes.length} imported mesh${meshes.length === 1 ? '' : 'es'} · ${models.length} modelled bod${models.length === 1 ? 'y' : 'ies'}`,
+      body: host,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  /* ===================================================== intent, read in */
+
+  /** Read a design-intent JSON file back into a live parametric document. */
+  pickIntent() {
+    const input = el('input', { type: 'file', accept: '.json,application/json' });
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => this.showIntentImport(String(reader.result), file.name);
+      reader.onerror = () => this.flash('That file could not be read.', 'err');
+      reader.readAsText(file);
+    });
+    input.click();
+  }
+
+  showIntentImport(text, filename) {
+    const r = Dev.importIntent(text);
+    if (!r.doc) {
+      modal({
+        title: 'Design intent', icon: 'file-import',
+        subtitle: filename,
+        body: el('div', {}, [
+          el('div', { class: 'banner err', text: `${r.errors.length} problem${r.errors.length === 1 ? '' : 's'} stopped this file importing.` }),
+          ...r.errors.slice(0, 10).map(e => el('div', { class: 'dx-item', text: e })),
+        ]),
+        actions: [{ label: 'Close', primary: true }],
+      });
+      return;
+    }
+
+    const check = Dev.intentRoundTrip(typeof text === 'string' ? JSON.parse(text) : text);
+    const body = el('div', {}, [
+      el('p', { class: 'hint', text: 'A design-intent file carries the parameters, the feature tree and the relationships behind a mesh. Reading it back rebuilds a live parametric document, which is the half of interoperability that normally goes missing.' }),
+      el('div', { class: 'merge-stats' }, [
+        el('div', { class: 'big-stat' }, [el('strong', { text: String(r.doc.features.length) }), el('span', { text: 'features' })]),
+        el('div', { class: 'big-stat' }, [el('strong', { text: String(r.doc.params.length) }), el('span', { text: 'parameters' })]),
+        el('div', { class: 'big-stat' }, [el('strong', { text: r.doc.meta.units }), el('span', { text: 'display units' })]),
+      ]),
+      el('div', { class: `banner ${check.ok ? 'ok' : 'warn'}`, text: check.ok
+        ? 'Everything in the file came back unchanged: the round trip is lossless on this document.'
+        : `${check.differences.length} thing${check.differences.length === 1 ? '' : 's'} did not survive the trip exactly.` }),
+      ...(check.ok ? [] : check.differences.slice(0, 10).map(d => el('div', { class: 'dx-item warn', text: d }))),
+      ...r.notes.slice(0, 8).map(n => el('div', { class: 'dx-item', text: n })),
+      section('Features', [el('div', {}, r.doc.features.map(f => el('div', { class: 'diff-row' }, [
+        el('span', { class: 'diff-badge', text: f.type }),
+        el('span', { class: 'diff-feature', text: f.name }),
+        el('small', { text: f.inputs.length ? `consumes ${f.inputs.length}` : Object.entries(f.params).slice(0, 3).map(([k, v]) => `${k} ${v}`).join(', ') }),
+      ])))], true, { icon: 'sequence' }),
+      el('div', { class: 'banner warn', text: 'Opening this replaces the document that is open now. Save first if you want to keep it.' }),
+    ]);
+
+    modal({
+      title: 'Import design intent', icon: 'file-import', wide: true,
+      subtitle: `${filename} · ${r.doc.meta.name}`,
+      body,
+      actions: [
+        { label: 'Open it', primary: true, run: () => {
+          store.load(r.doc);
+          this.selection.clear();
+          this.rebuildNow();
+          this.flash(`Imported ${r.doc.features.length} features from design intent.`, 'ok');
+        } },
+        { label: 'Cancel' },
+      ],
     });
   }
 

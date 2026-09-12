@@ -37,16 +37,46 @@ import { standards, limits } from './standards.js';
 /* ------------------------------------------------------------- view frames */
 
 /**
- * First-angle projection: the view you look at is placed on the far side from
- * the direction you look. Front bottom-left, top above it, right to its right.
- * The symbol in the title block says which convention is in use, because
- * getting that wrong mirrors the part.
+ * The six directions a view can look from, and which way is up in each.
+ *
+ * Where each view is *placed* is not a property of the view: it is a property
+ * of the projection convention, so it lives in PROJECTIONS below. Getting that
+ * split wrong is how a drawing ends up labelled first angle and laid out in
+ * third, which mirrors the part in the eyes of whoever reads it.
  */
 export const VIEWS = {
-  front: { label: 'FRONT', dir: [0, 1, 0], up: [0, 0, 1], at: [0, 0] },
-  top: { label: 'TOP', dir: [0, 0, -1], up: [0, 1, 0], at: [0, 1] },
-  right: { label: 'RIGHT', dir: [-1, 0, 0], up: [0, 0, 1], at: [1, 0] },
-  iso: { label: 'ISO', dir: [-1, 1, -1], up: [0, 0, 1], at: [1, 1], iso: true },
+  front: { label: 'FRONT', dir: [0, 1, 0], up: [0, 0, 1] },
+  top: { label: 'TOP', dir: [0, 0, -1], up: [0, 1, 0] },
+  right: { label: 'RIGHT', dir: [-1, 0, 0], up: [0, 0, 1] },
+  iso: { label: 'ISO', dir: [-1, 1, -1], up: [0, 0, 1], iso: true },
+};
+
+/**
+ * Where the views go, and the symbol that declares it.
+ *
+ * Cell coordinates are [column, row] with row 0 nearest the title block, which
+ * is at the bottom of the sheet. Both conventions are here because both are in
+ * daily use: first angle is the ISO norm across Europe and Asia, third angle
+ * the ASME norm in North America. The layout and the stated symbol come from
+ * one entry each, so they cannot disagree.
+ *
+ *   First angle  each view is projected onto the far side of the part, so the
+ *                view from above is drawn below the front view and the view
+ *                from the right is drawn to its left.
+ *   Third angle  each view is projected onto the near side, so the view from
+ *                above is drawn above and the view from the right to the right.
+ */
+export const PROJECTIONS = {
+  first: {
+    label: 'FIRST ANGLE',
+    at: { front: [1, 1], top: [1, 0], right: [0, 1], iso: [0, 0] },
+    note: 'ISO: the view from above is drawn below the front view, and the view from the right is drawn to its left.',
+  },
+  third: {
+    label: 'THIRD ANGLE',
+    at: { front: [0, 0], top: [0, 1], right: [1, 0], iso: [1, 1] },
+    note: 'ASME: the view from above is drawn above the front view, and the view from the right is drawn to its right.',
+  },
 };
 
 function frameFor(view) {
@@ -337,7 +367,7 @@ export function buildView(bodies, viewKey, { origin, holes = [], hlr = true, siz
 
   const box = boxFrom(kept, circles);
 
-  return { key: viewKey, label: view.label, iso: !!view.iso, segs: kept, circles, box, at: view.at, frame };
+  return { key: viewKey, label: view.label, iso: !!view.iso, segs: kept, circles, box, frame };
 }
 
 /**
@@ -525,8 +555,10 @@ export const SHEETS = {
  */
 export function buildSheet(bodies, {
   doc, build, sheet = 'a3l', views = ['front', 'top', 'right', 'iso'], hlr = true, scale = null,
+  projection = 'first',
 } = {}) {
   const paper = SHEETS[sheet] || SHEETS.a3l;
+  const proj = PROJECTIONS[projection] || PROJECTIONS.first;
   const margin = 10;
   const blockH = 34;
 
@@ -565,10 +597,11 @@ export function buildSheet(bodies, {
   const chosen = scale || standardScale(worst > 0 ? 1 / worst : 1);
 
   const placed = built.map((v) => {
-    const cx = margin + cellW * (v.at[0] + 0.5);
-    const cy = margin + blockH + cellH * (v.at[1] + 0.5);
+    const at = proj.at[v.key] || [0, 0];
+    const cx = margin + cellW * (at[0] + 0.5);
+    const cy = margin + blockH + cellH * (at[1] + 0.5);
     return {
-      ...v,
+      ...v, at,
       origin: [cx, cy],
       dims: dimensionsFor(v),
     };
@@ -578,7 +611,8 @@ export function buildSheet(bodies, {
     paper, margin, blockH, scale: chosen,
     views: placed,
     holes,
-    title: titleBlock(doc, build, bodies, chosen, sheet),
+    projection,
+    title: titleBlock(doc, build, bodies, chosen, sheet, proj),
     sampledHLR: hlr,
   };
 }
@@ -591,7 +625,7 @@ function standardScale(fit) {
 }
 export const scaleLabel = (s) => (s >= 1 ? `${Math.round(s)}:1` : `1:${Math.round(1 / s)}`);
 
-function titleBlock(doc, build, bodies, scale, sheet) {
+function titleBlock(doc, build, bodies, scale, sheet, proj = PROJECTIONS.first) {
   const st = standards();
   const proc = processOf(doc.studio?.process || st.process);
   const lim = limits(proc);
@@ -613,7 +647,7 @@ function titleBlock(doc, build, bodies, scale, sheet) {
     tolerance: lim.tolerance,
     generator: `${APP_NAME} ${APP_VERSION}`,
     // First angle. Stated explicitly because the alternative mirrors the part.
-    projection: 'FIRST ANGLE',
+    projection: proj.label,
   };
 }
 
