@@ -5,7 +5,8 @@
  * drag-to-reorder. Consumed features stay visible but dimmed — that is what
  * makes a feature history editable rather than a one-way pipeline.
  */
-import { el, clear, promptDialog, icon, emptyState, contextMenu } from './shell.js';
+import { el, clear, promptDialog, icon, emptyState, contextMenu, verb } from './shell.js';
+import { attachLongPress } from './mobile.js';
 import { store, catalogOf, MATERIALS } from '../core/doc.js';
 import { ICON_FOR } from './commands.js';
 
@@ -29,8 +30,10 @@ function renderFeatures(app, host) {
   const doc = store.doc;
 
   if (!doc.features.length) {
-    host.appendChild(emptyState('No features yet',
-      'Add a solid from the <b>Create</b> group, draw a profile in <b>Draft</b> and extrude it, or drop an STL onto the viewport.', 'cube3d'));
+    host.appendChild(emptyState('No features yet', verb(
+      'Add a solid from the <b>Create</b> group, draw a profile in <b>Draft</b> and extrude it, or drop an STL onto the viewport.',
+      'Tap a shape in the toolbar above, or start from a template.',
+    ), 'cube3d'));
     host.appendChild(el('div', { class: 'btn-row', style: { marginTop: '10px' } }, [
       el('button', { class: 'btn sm', onclick: () => app.run('add.box') }, [icon('box', { size: 14 }), 'Add a box']),
       el('button', { class: 'btn sm', onclick: () => app.run('file.template') }, [icon('template', { size: 14 }), 'Templates']),
@@ -123,6 +126,10 @@ function renderFeatures(app, host) {
     ].filter(Boolean));
 
     bindDrag(app, node, f);
+    attachLongPress(node, (e) => {
+      if (!app.selection.has(f.id)) app.select([f.id]);
+      node.dispatchEvent(new MouseEvent('contextmenu', { clientX: e.clientX, clientY: e.clientY, bubbles: true, cancelable: true }));
+    });
     host.appendChild(node);
   }
 
@@ -240,7 +247,10 @@ function renderLayers(app, host) {
   host.appendChild(el('div', { class: 'panel-head', style: { padding: '12px 2px 5px', borderBottom: '0' }, text: `Objects (${draw.entities.length})` }));
 
   if (!counts.size) {
-    host.appendChild(emptyState('Empty drawing', 'Pick a tool from the ribbon and click in the viewport. Press <kbd>L</kbd> for a line.', 'sketch'));
+    host.appendChild(emptyState('Empty drawing', verb(
+      'Pick a tool from the ribbon and click in the viewport. Press <kbd>L</kbd> for a line.',
+      'Pick a tool above, then tap in the drawing. Two fingers pan and zoom.',
+    ), 'sketch'));
     return;
   }
   for (const [type, n] of [...counts].sort((a, b) => b[1] - a[1])) {

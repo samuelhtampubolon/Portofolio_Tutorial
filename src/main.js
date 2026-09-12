@@ -28,6 +28,7 @@ import {
 import { buildCommands, TEMPLATES, registerFeatureFactory, ICON_FOR } from './ui/commands.js';
 import { menuDefs, ribbonDefs, quickDefaults, viewportContextMenu, SHORT_LABEL } from './ui/menus.js';
 import { OperatorHost } from './ui/operators.js';
+import { MobileShell, isPhone, attachLongPress } from './ui/mobile.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
 import { TimelineUI } from './ui/timelineui.js';
@@ -81,6 +82,11 @@ class App {
     this.vp.onTransformEnd = () => this.commitGizmo();
     this.vp.onTransformDrag = () => this.previewGizmo();
     this.vp.onContext = (e, hit) => this.showViewportMenu(e, hit);
+    attachLongPress(this.vp.renderer.domElement, (e) => {
+      this.vp._updatePointer(e);
+      this.showViewportMenu(e, this.vp.pick());
+    });
+    attachLongPress($('#viewport2d'), (e) => this.showDraftMenu(e));
     this.vp.onPointerMove = () => { if (this.ops.running) this.ops.onPointerMove(); };
     this.draft.onStatus = (s) => this.draftStatus(s);
     this.draft.onEntityAdded = () => { this.markLearn('draw'); this.refreshUI(); };
@@ -89,6 +95,7 @@ class App {
 
     this.commands = buildCommands(this);
     this.commandMap = new Map(this.commands.map(c => [c.id, c]));
+    this.mobile = new MobileShell(this);
 
     this.buildWorkspaceTabs();
     this.buildDocChip();
@@ -107,10 +114,11 @@ class App {
     this.restoreSession();
     this.setWorkspace('model');
     this.rebuildNow();
-    this.vp.frameAll();
     this.draft.start();
     this.draft.resize();
     this.renderLearn();
+    // Frame after the chrome has laid out, so the camera sees the real canvas.
+    requestAnimationFrame(() => requestAnimationFrame(() => this.vp.frameAll()));
 
     this._autosave = setInterval(() => { if (store.dirty) { saveLocal(); this.markSaved(); } }, Math.max(5, this.prefs.autosaveSec) * 1000);
     addEventListener('beforeunload', (e) => {
@@ -318,6 +326,7 @@ class App {
     this.refreshRibbon();
     this.updateStatus();
     this.updateTopActions();
+    this.mobile?.refresh();
     const name = $('#docName');
     if (name && document.activeElement !== name) name.value = store.doc.meta.name;
     $('#docDirty')?.classList.toggle('on', store.dirty);
@@ -346,6 +355,7 @@ class App {
     else { this.sim.pause(); this.sim.reset(); }
     this.vp.setGizmoMode(ws === 'model' ? this.gizmoMode : null);
     this.buildRibbon();
+    this.mobile?.refresh();
     this.refreshUI();
     bus.emit(T.WORKSPACE, ws);
     status(WS_META[ws].hint);
@@ -1050,6 +1060,7 @@ class App {
 
   togglePanel(which) {
     if (which === 'timeline') { this.setTimelineVisible($('#timeline').hidden); this.refreshUI(); return; }
+    if (isPhone()) { this.mobile.togglePanelSheet(which); return; }
     $('#workarea').classList.toggle(`${which}-collapsed`);
     setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
     this.refreshUI();
@@ -1285,6 +1296,10 @@ class App {
   }
 
   defaultKeyHints() {
+    if (matchMedia('(pointer: coarse)').matches) {
+      if (this.workspace === 'draft') return [['tap', 'draw'], ['2 fingers', 'pan / zoom'], ['hold', 'menu']];
+      return [['drag', 'orbit'], ['2 fingers', 'pan / zoom'], ['hold', 'menu']];
+    }
     if (this.workspace === 'draft') return [['LMB', 'draw'], ['RMB', 'pan'], ['wheel', 'zoom'], ['F3/F8', 'snap/ortho']];
     if (this.workspace === 'sim') return [['space', 'play'], [',/.', 'step'], ['K', 'key pose']];
     return [['LMB', 'select'], ['RMB', 'menu'], ['G/R/S', 'transform'], ['Q', 'quick'], ['Ctrl K', 'commands']];
@@ -1602,6 +1617,24 @@ class App {
     quickMenu(x, y, ids.map(id => this.commandMap.get(id)).filter(Boolean), (c) => this.run(c.id));
   }
 
+  showDraftMenu(e) {
+    const d = this.draft;
+    const hit = d.hitTest(d.toWorld(e.clientX - d.cv.getBoundingClientRect().left, e.clientY - d.cv.getBoundingClientRect().top));
+    if (hit && !d.selection.has(hit.id)) { d.selection = new Set([hit.id]); d.invalidate(); this.refreshUI(); }
+    const sel = d.selection.size;
+    contextMenu(e.clientX, e.clientY, [
+      { header: sel ? `${sel} object${sel === 1 ? '' : 's'} selected` : 'Drawing' },
+      ...(sel ? [
+        this.menuItem('sketch.extrude'), this.menuItem('sketch.revolve'), '-',
+        this.menuItem('edit.duplicate'), this.menuItem('draft.rotate90'), this.menuItem('draft.mirrorX'),
+        '-', this.menuItem('edit.delete'),
+      ] : [
+        this.menuItem('draft.line'), this.menuItem('draft.rect'), this.menuItem('draft.circle'),
+        '-', this.menuItem('edit.selectAll'), this.menuItem('draft.zoomExtents'), this.menuItem('draft.snap'),
+      ]),
+    ].filter(Boolean));
+  }
+
   showViewportMenu(e, hit) {
     const id = hit?.object?.userData?.featureId || null;
     if (id && !this.selection.has(id)) this.select([id]);
@@ -1611,33 +1644,18 @@ class App {
   /* ============================================================ binding */
 
   bindGlobalUI() {
-    const wa = $('#workarea');
-    const mobile = () => matchMedia('(max-width: 900px)').matches;
-    const drawer = (side) => {
-      const cls = side === 'left' ? 'mobile-left' : 'mobile-right';
-      wa.classList.remove(side === 'left' ? 'mobile-right' : 'mobile-left');
-      wa.classList.toggle(cls);
-    };
-    const ml = $('#mobLeft'), mr = $('#mobRight');
-    ml.appendChild(icon('panel-left', { size: 14 }));
-    mr.appendChild(icon('panel-right', { size: 14 }));
-    ml.addEventListener('click', () => drawer('left'));
-    mr.addEventListener('click', () => drawer('right'));
-    $('#stage').addEventListener('pointerdown', (e) => {
-      if (!mobile() || e.target.closest('.edge-tab')) return;
-      wa.classList.remove('mobile-left', 'mobile-right');
-    });
+    const mobile = () => isPhone();
 
     const leftActions = clear($('#leftActions'));
     leftActions.appendChild(el('button', {
       class: 'mini-btn', title: 'Collapse the outline panel  (T)',
-      onclick: () => (mobile() ? wa.classList.remove('mobile-left') : this.togglePanel('left')),
+      onclick: () => (mobile() ? this.mobile.closeSheet() : this.togglePanel('left')),
     }, [icon('chevron-left', { size: 14 })]));
 
     const rightActions = clear($('#rightActions'));
     rightActions.appendChild(el('button', {
       class: 'mini-btn', title: 'Collapse the properties panel  (N)',
-      onclick: () => (mobile() ? wa.classList.remove('mobile-right') : this.togglePanel('right')),
+      onclick: () => (mobile() ? this.mobile.closeSheet() : this.togglePanel('right')),
     }, [icon('chevron-right', { size: 14 })]));
 
     this.vp.onHover = (hit) => {

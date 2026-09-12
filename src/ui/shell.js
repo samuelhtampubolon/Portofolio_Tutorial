@@ -34,6 +34,11 @@ export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 export const clear = (node) => { while (node.firstChild) node.removeChild(node.firstChild); return node; };
 
+/** True on a touch device — used to swap pointer-specific wording. */
+export const coarse = () => matchMedia('(pointer: coarse)').matches;
+/** "Click"/"Tap" and similar, chosen for the pointer actually in use. */
+export const verb = (mouse, touch) => (coarse() ? touch : mouse);
+
 /* --------------------------------------------------------------- toasts */
 
 export function toast(msg, kind = 'info', ms = 3200) {
@@ -444,7 +449,7 @@ export function scrubNumber(value, onChange, {
   input.addEventListener('pointerdown', (e) => {
     if (document.activeElement === input) return;     // already editing by keyboard
     e.preventDefault();
-    input.setPointerCapture(e.pointerId);
+    try { input.setPointerCapture(e.pointerId); } catch { /* pointer already gone */ }
     const start = parseFloat(input.value) || 0;
     drag = { x: e.clientX, start, moved: false };
     input.classList.add('scrubbing');

@@ -3,7 +3,7 @@
  * selection. Numeric fields accept expressions, so every property in the
  * model can be driven by a named document parameter.
  */
-import { el, clear, section, field, checkbox, select, segmented, kv, promptDialog, icon, emptyState, scrubNumber } from './shell.js';
+import { el, clear, section, field, checkbox, select, segmented, kv, promptDialog, icon, emptyState, scrubNumber, verb } from './shell.js';
 import { store, catalogOf, MATERIALS, UNITS, uid, toDisplay, fromDisplay } from '../core/doc.js';
 import { tryEval } from '../core/expr.js';
 import { massProperties } from '../core/rebuild.js';
@@ -199,8 +199,10 @@ function renderModel(app, host) {
       el('button', { class: 'btn danger', text: 'Delete', onclick: () => app.deleteSelection() }),
     ]));
   } else if (!ids.length) {
-    host.appendChild(emptyState('Nothing selected',
-      'Click a body in the viewport or a row in the feature tree. Press <kbd>Ctrl K</kbd> for every command.', 'target'));
+    host.appendChild(emptyState('Nothing selected', verb(
+      'Click a body in the viewport or a row in the feature tree. Press <kbd>Ctrl K</kbd> for every command.',
+      'Tap a body in the viewport, or open <b>Panels → Outline</b>. <b>More</b> has every command.',
+    ), 'target'));
   }
 
   host.appendChild(paramsSection(app, scope));

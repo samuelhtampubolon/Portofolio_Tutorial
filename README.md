@@ -9,6 +9,7 @@ No installation, no account, no server. Your model never leaves your machine.
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
 ![167 commands](https://img.shields.io/badge/commands-167-8957e5)
 ![58 tests](https://img.shields.io/badge/tests-58%20passing-3da639)
+![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
 > **▶ Live app:** https://samuelhtampubolon.github.io/Portofolio_Tutorial/
 >
@@ -58,6 +59,33 @@ so nothing can drift out of sync:
 Plus a **preferences dialog**, an **undo-history browser** you can jump around in, six **starter
 templates** that are all real parametric models, and an optional **learning card** that tracks
 the eight things worth trying first.
+
+### On a phone
+
+Below 900px the desktop chrome is replaced rather than shrunk, because a menu bar that vanishes
+and 27px controls are not a mobile interface:
+
+<table>
+<tr>
+<td width="33%"><img src="docs/images/mobile-model.png" alt="Modelling on a phone"></td>
+<td width="33%"><img src="docs/images/mobile-menu.png" alt="Every menu in a bottom sheet"></td>
+<td width="33%"><img src="docs/images/mobile-panel.png" alt="Panels as a bottom sheet"></td>
+</tr>
+</table>
+
+- **Bottom navigation** — the three workspaces, Panels and More, all in thumb reach.
+- **Bottom sheets** host the *same* panel DOM as the desktop side panels, so nothing is a
+  second-class copy. Drag the handle to resize between half and full height, or fling it away.
+- **Every one of the 11 menus** is reachable from the More sheet, as accordions over 192 leaf
+  commands, with a search row that opens the palette.
+- **Long-press replaces right-click** in the viewport, the drawing and the feature tree.
+- **Two-finger pan and pinch-zoom** in the Draft workspace, which has no wheel or middle button
+  to fall back on. A drawing tool commits on lift, not on press, so the first finger of a
+  two-finger gesture never leaves a stray point behind.
+- **Every control clears 40px** and no input is under 16px, which is the threshold below which
+  iOS Safari zooms the page on focus.
+- Safe-area insets for notches and home indicators; a landscape layout that keeps the viewport
+  usable.
 
 ### Three things it does better than the packages it imitates
 
@@ -219,6 +247,7 @@ src/
   ui/
     icons.js          145 inline SVG icons, one visual language, no icon font
     shell.js          menus, palette, quick menu, modals, toasts, form controls
+    mobile.js         the phone shell: bottom bar, sheets, long-press
     commands.js       the command registry and the starter templates
     menus.js          menu-bar and ribbon layouts, generated per workspace
     operators.js      modal G/R/S transforms with axis locking and typed input
@@ -248,6 +277,10 @@ Some decisions worth knowing about:
   and `enabled` predicates — so a command cannot exist in one place and not another.
 - **145 inline SVG icons**, no icon font and no sprite sheet: each is a path string drawn in
   `currentColor`, so icons inherit theme and state for free.
+- **Phone layout comes from media queries, never from JavaScript.** A `MediaQueryList` change
+  event is not reliably delivered in every engine, and a missed one would leave desktop chrome
+  on a phone-sized screen. The class JS sets is used only to decide *behaviour* — which sheet a
+  control opens — and never for anything visual.
 
 ## Honest limitations
 
@@ -272,7 +305,9 @@ It is worth being clear about what this is not, so you can decide whether it fit
   WebM in Chrome and Firefox; Safari support varies.
 
 Requires a browser with WebGL 2 and ES modules — Chrome, Edge, Firefox and Safari from
-roughly 2021 onwards. It works on a phone, but a mouse and a keyboard make it far nicer.
+roughly 2021 onwards. The phone layout is a real interface rather than a fallback, but the
+modal transform operators and the 60-odd keyboard shortcuts need a keyboard, so serious
+modelling is still faster on a desktop.
 
 ## Contributing
 

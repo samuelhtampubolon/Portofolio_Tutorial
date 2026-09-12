@@ -54,6 +54,8 @@ export class Draft2D {
     this.dragBox = null;
     this.dragMove = null;
     this.typed = '';
+    this.touches = new Map();     // active touch points, for pinch/pan
+    this.gesture = null;
     this.onStatus = null;
     this.onEntityAdded = null;
     this.onTextRequest = null;
@@ -111,20 +113,82 @@ export class Draft2D {
     cv.addEventListener('pointerdown', e => this._down(e));
     cv.addEventListener('pointermove', e => this._move(e));
     cv.addEventListener('pointerup', e => this._up(e));
+    cv.addEventListener('pointercancel', e => this._up(e));
     cv.addEventListener('pointerleave', () => { this.snapHit = null; this.invalidate(); });
     cv.addEventListener('wheel', e => this._wheel(e), { passive: false });
     cv.addEventListener('contextmenu', e => e.preventDefault());
     cv.addEventListener('dblclick', () => { if (this.tool === 'polyline' || this.tool === 'spline') this._finishChain(); });
   }
 
+  /* ------------------------------------------------ touch gestures */
+
+  /**
+   * A phone has no wheel and no middle button, so the two-finger gesture is
+   * the only way to pan and zoom. One finger keeps drawing; the moment a
+   * second lands, any in-progress drag is abandoned and the pair drives the
+   * view instead.
+   */
+  _trackDown(e) {
+    if (e.pointerType !== 'touch') return false;
+    this.touches.set(e.pointerId, this._local(e));
+    if (this.touches.size === 2) {
+      const [a, b] = [...this.touches.values()];
+      this.gesture = {
+        dist: Math.hypot(b[0] - a[0], b[1] - a[1]) || 1,
+        mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2],
+        scale: this.view.scale,
+        cx: this.view.cx, cy: this.view.cy,
+      };
+      // abandon anything the first finger had started
+      this.dragBox = null;
+      this.dragMove = null;
+      this.panning = null;
+      this._tap = null;
+      this.invalidate();
+    }
+    return this.touches.size >= 2;
+  }
+
+  _trackMove(e) {
+    if (e.pointerType !== 'touch' || !this.touches.has(e.pointerId)) return false;
+    this.touches.set(e.pointerId, this._local(e));
+    if (this.touches.size < 2 || !this.gesture) return this.touches.size >= 2;
+
+    const [a, b] = [...this.touches.values()];
+    const dist = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const g = this.gesture;
+
+    // anchor the zoom on the world point under the original pinch centre
+    const next = Math.max(0.002, Math.min(4000, g.scale * (dist / g.dist)));
+    const wx = (g.mid[0] - this.w / 2) / g.scale + g.cx;
+    const wy = (this.h / 2 - g.mid[1]) / g.scale + g.cy;
+    this.view.scale = next;
+    this.view.cx = wx - (mid[0] - this.w / 2) / next;
+    this.view.cy = wy + (mid[1] - this.h / 2) / next;
+    this.invalidate();
+    return true;
+  }
+
+  _trackUp(e) {
+    if (e.pointerType !== 'touch') return false;
+    const had = this.touches.size >= 2;
+    this.touches.delete(e.pointerId);
+    if (this.touches.size < 2) this.gesture = null;
+    if (had) { this.pending = this.pending; return true; }   // swallow the tap that ended a gesture
+    return false;
+  }
+
   _down(e) {
-    this.cv.setPointerCapture?.(e.pointerId);
+    if (this._trackDown(e)) return;
+    try { this.cv.setPointerCapture?.(e.pointerId); } catch { /* synthetic or stale pointer */ }
     if (e.button === 1 || e.button === 2 || (e.button === 0 && e.altKey)) {
       this.panning = { x: e.clientX, y: e.clientY, cx: this.view.cx, cy: this.view.cy };
       return;
     }
     if (e.button !== 0) return;
     const p = this._pick(e);
+    this.cursor = { x: p[0], y: p[1] };
     if (this.tool === 'select') {
       const hit = this.hitTest(p);
       if (hit && this.selection.has(hit.id) && !e.shiftKey) {
@@ -141,10 +205,17 @@ export class Draft2D {
       this.invalidate();
       return;
     }
+    if (e.pointerType === 'touch') {
+      // Defer to pointerup: a second finger may still arrive and turn this
+      // into a pan/zoom gesture, and a committed point cannot be taken back.
+      this._tap = { p, x: e.clientX, y: e.clientY };
+      return;
+    }
     this._toolClick(p, e);
   }
 
   _move(e) {
+    if (this._trackMove(e)) return;
     if (this.panning) {
       const dx = (e.clientX - this.panning.x) / this.view.scale;
       const dy = (e.clientY - this.panning.y) / this.view.scale;
@@ -169,6 +240,13 @@ export class Draft2D {
   }
 
   _up(e) {
+    const tap = this._tap;
+    this._tap = null;
+    if (this._trackUp(e)) return;
+    if (tap && e.pointerType === 'touch' && this.touches.size === 0) {
+      // a tap, not the start of a gesture and not a drag
+      if (Math.hypot(e.clientX - tap.x, e.clientY - tap.y) <= 14) { this._toolClick(tap.p, e); return; }
+    }
     if (this.panning) { this.panning = null; return; }
     if (this.dragBox) {
       const { a, b } = this.dragBox;
