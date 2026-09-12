@@ -8,7 +8,7 @@ import { store, catalogOf, MATERIALS, UNITS, uid, toDisplay, fromDisplay } from 
 import { tryEval } from '../core/expr.js';
 import { massProperties } from '../core/rebuild.js';
 import { ANIM_PROPS, EASINGS, SCHEDULE_MODES, MOTOR_TYPES } from '../sim/sim.js';
-import { fmt } from '../draft/draft.js';
+import { fmt } from '../draft/entity.js';
 import { severityLabel } from '../intel/doctor.js';
 import { PROCESSES } from '../intel/process.js';
 import { standards, setStandard } from '../intel/standards.js';

@@ -1,0 +1,17 @@
+{
+  "name": "tessercad-desktop",
+  "productName": "TesserCAD",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TesserCAD as a desktop application: the same static site, in a hardened window, with no network.",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --config electron-builder.yml --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  }
+}

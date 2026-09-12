@@ -17,7 +17,8 @@ import { rebuild, rebuildAsync, invalidateCache, massProperties } from './core/r
 import { pool as csgPool } from './core/csg-pool.js';
 import { evalSafe, EXPR_HELP } from './core/expr.js';
 import { Viewport } from './view/viewport.js';
-import { Draft2D, DRAW_TOOLS, fmt, rotateEntity, scaleEntity, mirrorEntity, entityBBox } from './draft/draft.js';
+import { Draft2D, DRAW_TOOLS } from './draft/draft.js';
+import { fmt, rotateEntity, scaleEntity, mirrorEntity, entityBBox } from './draft/entity.js';
 import { Simulator } from './sim/sim.js';
 import { recordTimeline, recordingSupported } from './sim/recorder.js';
 import * as IO from './io/io.js';

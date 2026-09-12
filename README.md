@@ -689,18 +689,24 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **645 headless checks** across eleven suites, in about three seconds. It shims
+This runs **854 headless checks** across sixteen suites, in about four seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 
 ```
-ok   core            58 checks      ok   drawing         37 checks
-ok   history         40 checks      ok   tolerance       77 checks
-ok   parallel        29 checks      ok   merge           74 checks
-ok   grammar         61 checks      ok   design as code  87 checks
-ok   fasteners       73 checks      ok   deviation       61 checks
-ok   hygiene         48 checks
+ok   security        66 checks      ok   fasteners       73 checks
+ok   architecture    17 checks      ok   hygiene         48 checks
+ok   desktop         62 checks      ok   drawing         37 checks
+ok   core            58 checks      ok   tolerance       77 checks
+ok   history         40 checks      ok   merge           74 checks
+ok   parallel        29 checks      ok   design as code  87 checks
+ok   grammar         61 checks      ok   deviation       61 checks
 ```
+
+The first three are not tests of features. `security` runs live attacks,
+`architecture` enforces the layering and `desktop` attacks the desktop shell's
+path handling, because a claim about structure or safety that is not checked is
+a claim that decays.
 
 `npm run test:core` runs just the first one, which is the expression evaluator, the CSG kernel, the
 geometry builders, the rebuild engine, the DXF codec, the starter templates and the command
@@ -887,6 +893,116 @@ no dependencies to install, so a clone and a static server is the whole developm
 `Portofolio_Tutorial` is a portfolio repository; alongside TesserCAD it holds a set of
 machine-learning Colab notebooks (`*.ipynb` in the root). They are unrelated to the CAD app
 and are kept here as part of the same portfolio.
+
+## Desktop application, for local and offline use
+
+A downloadable build is produced by CI from the same source, as a **portable
+Windows `.exe`** that runs from wherever you put it: no installer, no
+administrator prompt, no registry writes. AppImage and dmg builds come from the
+same workflow.
+
+Get it from the [Releases](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+page, or trigger **Actions → Desktop build** on your own fork.
+
+**The binary is not committed to this repository, on purpose.** A committed
+`.exe` is a blob nobody can review, cannot be traced to the source it came from,
+and has to be trusted on the word of whoever pushed it. Built by CI, every
+artefact comes from a commit you can read, by a workflow you can read, on a
+runner nobody controls, with a SHA-256 published beside it. The full test suite
+runs before anything is packaged.
+
+It is **not code-signed**, so SmartScreen will warn you. A certificate costs
+money and a self-signed one only teaches people to click through warnings.
+Verify the hash instead — `Get-FileHash file.exe -Algorithm SHA256` — against
+the `.sha256` beside the download and against the workflow log of the run that
+built it. If you would rather not run an unsigned binary, the hosted version is
+the same application and installs nothing.
+
+The shell is a browser window with the browser taken away, which means the
+browser's sandbox is no longer doing the work. It is therefore configured as
+strictly as Electron allows rather than as its defaults suggest: renderer
+sandbox on, context isolation on, **node integration off** (without that, an
+XSS stops being a script injection and becomes code execution on your machine),
+no preload script, no webview, navigation to any other origin refused, every
+permission request denied, and the app served over a loopback server bound to
+`127.0.0.1` rather than `file://`, since under `file://` every local file is
+same-origin with the page.
+
+That server is the only code in the desktop build that turns an untrusted string
+into a filesystem read, so it lives apart from the shell specifically so it can
+be tested: fourteen path-traversal encodings are attacked directly, plus two
+over a real socket, and the Electron posture is asserted as code so a future
+one-word relaxation fails the build instead of shipping in a binary.
+
+Developer tools stay enabled. An application claiming your data never leaves
+your machine should let you open the network panel and confirm it.
+
+## Security
+
+**[SECURITY.md](SECURITY.md)** has the threat model, which is worth reading
+because most of the standard web threat model does not apply: there is no
+server, no account, no session and no outbound request, so there is nothing to
+phish and no token to steal. The whole attack surface is *files other people
+wrote* — a `.tcad`, an STL, a DXF, a pasted spec — and the four things that
+could go wrong with one.
+
+Briefly, what is enforced rather than promised:
+
+- **A Content-Security-Policy** with `default-src 'none'` and no network origin
+  permitted at all, so "makes no network calls" is a browser guarantee and not
+  a sentence in a README. `script-src` allows neither `unsafe-inline` nor
+  `unsafe-eval`; the one inline script, the import map, is pinned by a SHA-256
+  hash that `npm test` keeps current.
+- **No dynamic code execution anywhere.** The expression engine is a
+  hand-written parser precisely so `width * 2` never reaches `eval`. The suite
+  asserts that no file in the project — tests included — contains `eval(`,
+  `Function(` or a string-bodied timer.
+- **Validation at the trust boundary.** The feature catalogue's `min`/`max` are
+  enforced in `migrate()`, which every document passes through however it
+  arrived, rather than in a widget a hand-edited file bypasses.
+- **Prototype pollution closed** at every parse boundary, tested by four
+  separate routes, with a null-prototype expression scope.
+
+Verified by 66 live attacks in `tools/tests/security.mjs` plus 62 in
+`tools/tests/desktop.mjs`. One gap is named rather than hidden: `frame-ancestors`
+is header-only and GitHub Pages serves no custom headers, so clickjacking is not
+prevented on the hosted copy. The desktop build sends the header, because there
+it controls the server.
+
+## Architecture
+
+**[ARCHITECTURE.md](ARCHITECTURE.md)** explains where each boundary is and why.
+
+The short version: seven layers, and a layer may import from any layer below it
+and from none above. `core` imports nothing from the project, so the arithmetic
+runs under Node with no browser. `intel` touches no DOM, which is why all
+twenty-four engineering modules are tested headlessly. `main.js` is the only
+file that imports `ui`.
+
+None of that is a convention. `tools/tests/architecture.mjs` enforces the
+layering, proves the graph is acyclic, and fails the build on a module over
+1200 lines or one without a header comment — because a structure that cannot be
+checked is a structure that erodes.
+
+## Attribution and originality
+
+**[ATTRIBUTION.md](ATTRIBUTION.md)** states what in this repository is original,
+what is borrowed and under what terms, in enough detail to be argued with.
+
+The short version: no source file here is copied, ported or translated out of any
+other CAD application. three.js is vendored unmodified with its MIT licence
+intact. One algorithm — the BSP boolean in `src/core/csg-core.js` — is
+structurally derived from Evan Wallace's MIT-licensed csg.js and is credited for
+it in the file header as well as in ATTRIBUTION.md. Everything else third-party
+is a published mathematical method, implemented from its statement and verified
+against an independent reference in the tests.
+
+Six of the eight open-source CAD projects this one is measured against are GPL
+or LGPL, which is exactly why nothing from them could be used in an MIT project
+even where it would have been convenient. What they contributed was problem
+framing, and that is acknowledged where it applies: `src/ui/operators.js` says
+in its header that modal transform operators are Blender's idea, reimplemented
+from the behaviour because it is better than the CAD convention.
 
 ## Licence
 

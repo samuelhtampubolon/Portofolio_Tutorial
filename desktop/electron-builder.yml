@@ -1,0 +1,69 @@
+# How the downloadable build is packaged.
+#
+# `portable` is the primary Windows target on purpose. It produces one .exe
+# that runs from wherever it is put, with no installer, no elevation prompt and
+# no registry writes. For an application whose entire claim is that it does not
+# reach into your machine, an installer that asks for administrator rights
+# would contradict the product.
+#
+# NSIS is built alongside it for people who want a Start-menu entry, and is
+# configured per-user so it never needs elevation either.
+appId: io.github.samuelhtampubolon.tessercad
+productName: TesserCAD
+copyright: Copyright (c) 2026 Samuel Tampubolon. MIT licensed.
+
+directories:
+  output: ../dist-desktop
+  buildResources: build
+
+# The application is the repository's static files plus this shell. Nothing is
+# compiled, so the list is explicit rather than the output of a bundler: what
+# ships is what you can read in the repository.
+files:
+  - main.cjs
+  - package.json
+  - from: ..
+    to: .
+    filter:
+      - index.html
+      - sw.js
+      - src/**/*
+      - styles/**/*
+      - vendor/**/*
+      - assets/**/*
+      - LICENSE
+      - ATTRIBUTION.md
+      - '!**/*.map'
+
+asar: true
+compression: maximum
+
+win:
+  target:
+    - target: portable
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+  # No code-signing certificate is configured. An unsigned binary is honest
+  # about what it is; a self-signed one only teaches users to click through
+  # warnings. See SECURITY.md for how to verify the download instead.
+  signAndEditExecutable: false
+
+portable:
+  artifactName: TesserCAD-${version}-portable.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: TesserCAD-${version}-setup.${ext}
+
+linux:
+  target: [AppImage]
+  category: Graphics
+  artifactName: TesserCAD-${version}.${ext}
+
+mac:
+  target: [dmg]
+  category: public.app-category.graphics-design
+  artifactName: TesserCAD-${version}.${ext}
