@@ -3117,7 +3117,7 @@ class App {
       if (mod) {
         const k = e.key.toLowerCase();
         const map = {
-          z: () => (e.shiftKey ? (this.zenModeOrRedo(e)) : store.undo()),
+          z: () => (e.shiftKey ? this.zenModeOrRedo() : store.undo()),
           y: () => store.redo(),
           s: () => (e.shiftKey ? this.saveAs() : IO.saveProject()),
           o: () => this.pickFile('.tcad,.json'),
@@ -3864,7 +3864,6 @@ class App {
       if (!map.ok) { host.appendChild(el('div', { class: 'banner err', text: map.reason })); return; }
 
       const sev = map.verdict.severity === 'ok' ? 'ok' : map.verdict.severity === 'warn' ? 'warn' : 'err';
-      const peak = Math.max(map.p95, map.tolerance, 1e-6);
       const maxBin = Math.max(...map.histogram.map(b => b.count), 1);
 
       host.append(
@@ -3906,7 +3905,6 @@ class App {
         })(),
         el('div', { class: 'banner warn', text: 'Distances are exact point-to-triangle, measured from the incoming mesh to the model. Sampling is capped, so the peak is the worst of what was sampled rather than the worst that exists; raise it by importing a coarser mesh or lower it by trusting the RMS over the peak. Nothing here registers the two shapes together: if the offset above is not near zero, fix that first.' }),
       );
-      void peak;
     };
     draw();
 
@@ -4355,9 +4353,12 @@ class App {
     });
   }
 
-  zenModeOrRedo(e) {
-    // Ctrl+Shift+Z is redo everywhere; the zen-mode binding lives on the menu.
-    void e;
+  /**
+   * Ctrl+Shift+Z is redo everywhere. The name records that this shortcut is
+   * zen mode in some packages; here that lives on the View menu instead, so
+   * the chord is free for the thing people expect it to do.
+   */
+  zenModeOrRedo() {
     store.redo();
   }
 

@@ -136,11 +136,11 @@ function writeDim(w, e, layer) {
   const size = e.size || 6;
   if (e.kind === 'radial') {
     const a = e.ang || 0;
-    const tip = [e.c[0] + Math.cos(a) * e.r, e.c[1] + Math.sin(a) * e.r];
+    // The leader runs from the centre out past the arc, which is where the
+    // text sits, so the point on the arc itself is never drawn.
     const out = [e.c[0] + Math.cos(a) * (e.r + size * 2), e.c[1] + Math.sin(a) * (e.r + size * 2)];
     line(w, layer, e.c, out);
     w.g(0, 'TEXT').g(8, layer).g(10, out[0]).g(20, out[1] + size * 0.4).g(30, 0).g(40, size).g(1, `R${round(e.r)}`);
-    void tip;
     return;
   }
   if (e.kind === 'angular') {

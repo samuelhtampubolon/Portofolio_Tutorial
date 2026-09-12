@@ -145,10 +145,23 @@ export function evalSafe(src, scope = {}, fallback = 0) {
   try { return evaluate(src, scope); } catch { return fallback; }
 }
 
-/** `{ ok, value, error }` — used by inputs that show inline validation. */
+/**
+ * `{ ok, value, error }` — used by inputs that show inline validation.
+ *
+ * A deeply nested expression exhausts the recursive-descent parser's stack,
+ * and the engine's own message for that is "Maximum call stack size exceeded",
+ * which tells a user nothing they can act on. It is translated here, because
+ * this is the boundary where an error stops being a fact about the program and
+ * starts being something a person has to read.
+ */
 export function tryEval(src, scope = {}) {
   try { return { ok: true, value: evaluate(src, scope), error: null }; }
-  catch (e) { return { ok: false, value: NaN, error: e.message }; }
+  catch (e) {
+    const message = e instanceof RangeError || /call stack/i.test(e.message || '')
+      ? 'Expression is nested too deeply to evaluate. Split it across two parameters.'
+      : e.message;
+    return { ok: false, value: NaN, error: message };
+  }
 }
 
 /**
@@ -156,7 +169,12 @@ export function tryEval(src, scope = {}) {
  * to reference earlier parameters. Cycles resolve to an error on that entry.
  */
 export function buildScope(params = []) {
-  const scope = {};
+  // A null prototype, so a parameter can never be named after something on
+  // Object.prototype and so an expression can never reach one. The parser
+  // already guards its lookups with hasOwnProperty; this removes the question
+  // a second time, at the other end, where a parameter name arrives from a
+  // file somebody else wrote.
+  const scope = Object.create(null);
   const errors = {};
   // Two passes so order-independence works for simple chains.
   for (let pass = 0; pass < 4; pass++) {

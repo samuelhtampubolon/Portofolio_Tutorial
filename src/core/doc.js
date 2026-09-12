@@ -246,6 +246,92 @@ export function catalogOf(type) { return CATALOG[type] || CATALOG.box; }
 
 /* ---------------------------------------------------------- factory helpers */
 
+/**
+ * Force a feature's parameters back inside the ranges the catalogue declares.
+ *
+ * The catalogue has always carried `min` and `max` for its numeric fields, and
+ * until now only the inspector honoured them. That made them a hint to one
+ * widget rather than a property of the data, and anything arriving from
+ * outside the interface skipped them entirely: a hand-edited `.tcad`, an
+ * imported design-intent file, a spec typed into the text editor. A crafted
+ * document could therefore ask for a helix of a million turns and get however
+ * many triangles the builder happened to tolerate before the tab died.
+ *
+ * So validation moves to the boundary where untrusted data enters, and the
+ * catalogue becomes the single authority on what a parameter may be. This runs
+ * inside `migrate`, which every document passes through however it arrived.
+ *
+ * Expressions are left alone on purpose: a string cannot be range-checked
+ * without evaluating it, and the expression engine already refuses a
+ * non-finite result at build time with a message naming the feature.
+ *
+ * SEGMENT_PRODUCT_CEILING is a second, blunter guard: each segment count can
+ * sit inside its own limit while the product of several of them does not. It
+ * bounds the product, which is a count of grid cells, and a cell is two
+ * triangles, so the worst case it permits is about twice this number of
+ * triangles. Booleans are gated separately and much harder by TRI_BUDGET.
+ */
+export const SEGMENT_PRODUCT_CEILING = 125000;
+
+export function sanitiseParams(type, params) {
+  const cat = CATALOG[type];
+  if (!cat) return { ...params };
+  const out = { ...params };
+  const fields = new Map((cat.fields || []).map(f => [f.key, f]));
+
+  for (const [key, value] of Object.entries(out)) {
+    const field = fields.get(key);
+    const fallback = cat.params[key];
+
+    // A parameter with no declared field still has a default, which is the
+    // only thing that can be trusted about it.
+    if (!field) {
+      if (typeof fallback === 'number' && typeof value === 'number' && !Number.isFinite(value)) out[key] = fallback;
+      continue;
+    }
+
+    if (field.kind === 'bool') { out[key] = !!value; continue; }
+
+    if (field.kind === 'select') {
+      const allowed = (field.options || []).map(o => (Array.isArray(o) ? o[0] : o));
+      if (allowed.length && !allowed.includes(value)) out[key] = fallback;
+      continue;
+    }
+
+    if (field.kind === 'text') { out[key] = value == null ? '' : String(value); continue; }
+
+    // Numeric kinds: len, num, ang, int.
+    if (typeof value === 'string') continue;               // an expression
+    let n = Number(value);
+    if (!Number.isFinite(n)) { out[key] = fallback; continue; }
+    if (field.kind === 'int') n = Math.round(n);
+    const lo = field.min ?? (field.kind === 'int' ? 1 : -Number.MAX_SAFE_INTEGER);
+    const hi = field.max ?? (field.kind === 'int' ? 4096 : Number.MAX_SAFE_INTEGER);
+    out[key] = Math.min(hi, Math.max(lo, n));
+  }
+
+  // Segment counts multiply, so each can be legal while the product is not.
+  // Scale the whole set down rather than picking one to blame.
+  const segKeys = (cat.fields || [])
+    .filter(f => f.kind === 'int' && /seg|steps|sides|tseg/i.test(f.key))
+    .map(f => f.key)
+    .filter(k => typeof out[k] === 'number');
+  if (segKeys.length > 1) {
+    let product = segKeys.reduce((n, k) => n * Math.max(1, out[k]), 1);
+    const turns = typeof out.turns === 'number' ? Math.max(1, out.turns) : 1;
+    product *= turns;
+    if (product > SEGMENT_PRODUCT_CEILING) {
+      const scale = Math.pow(SEGMENT_PRODUCT_CEILING / product, 1 / segKeys.length);
+      for (const k of segKeys) {
+        // Floor rather than round: rounding up can put the product back over
+        // the ceiling it was just scaled to fit under.
+        out[k] = Math.max(fields.get(k).min ?? 3, Math.floor(out[k] * scale));
+      }
+    }
+  }
+  return out;
+}
+
 export function makeFeature(type, over = {}) {
   const cat = catalogOf(type);
   const mat = MATERIALS[over.material || 'steel'] || MATERIALS.steel;
@@ -378,7 +464,7 @@ export function migrate(doc) {
     const base = makeFeature(f.type);
     return {
       ...base, ...f,
-      params: { ...base.params, ...(f.params || {}) },
+      params: sanitiseParams(f.type, { ...base.params, ...(f.params || {}) }),
       transform: { ...base.transform, ...(f.transform || {}) },
       appearance: { ...base.appearance, ...(f.appearance || {}) },
       inputs: Array.isArray(f.inputs) ? f.inputs : [],

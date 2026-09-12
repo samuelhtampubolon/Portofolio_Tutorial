@@ -17,6 +17,7 @@ import { dirname, join } from 'node:path';
 const here = dirname(fileURLToPath(import.meta.url));
 
 const SUITES = [
+  ['security', 'tests/security.mjs'],
   ['core', 'test.mjs'],
   ['history', 'tests/history.mjs'],
   ['parallel', 'tests/parallel.mjs'],

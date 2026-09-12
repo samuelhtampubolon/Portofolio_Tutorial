@@ -20,10 +20,11 @@
  * is worse than one that is a deploy behind, and the fetch below still
  * refreshes the cache in the background, so the next open is current.
  */
-const VERSION = 'tessercad-bdb5f7aec26b';
+const VERSION = 'tessercad-388cb3974aff';
 const FILES = [
   "assets/favicon.svg",
   "index.html",
+  "src/boot.js",
   "src/core/bus.js",
   "src/core/csg-core.js",
   "src/core/csg-pool.js",
