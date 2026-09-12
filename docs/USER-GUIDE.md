@@ -864,6 +864,142 @@ open it, and opening it replaces the document you have, so save first.
 
 ---
 
+## 5.8 History, speed, intent and ownership
+
+### History  `Shift`+`H`
+
+Three groups: what you can go back to, where you are, and what is ahead. Then a fourth that no
+other package offers, because a linear undo stack cannot: **Branches you left**.
+
+Undo a few steps and then make an edit, and everywhere else the states you undid are gone forever.
+Here they become a branch. They stay named and one click away for as long as the tab is open, and
+jumping back to one leaves the branch you were on equally reachable. Nothing you have done in a
+session is ever unreachable.
+
+Two things follow from that:
+
+- Undo from a branch walks **that** branch, not the one you abandoned.
+- Redo retraces the path you actually took, not an arbitrary sibling.
+
+**Changing the view is never an undo step.** The grid, the shading, the camera, the section plane:
+none of them is a change to the model, so none of them costs you an undo or clears what you can
+redo. If you want a *model* state back, undo gives you exactly that.
+
+History lives for the session. For something you want to keep, save a version (`Ctrl`+`Shift`+`S`).
+
+### Why a heavy rebuild no longer freezes the window
+
+Booleans run in worker threads, one per core minus one, so the thread that draws the interface is
+free while they compute. Independent booleans run at the same time on different cores, which is
+what makes a document of several parts scale rather than add up.
+
+You do not configure any of it. What you will notice is that the window keeps responding during a
+rebuild that used to lock it, and that a document with four independent booleans finishes in
+roughly the time of the slowest one rather than the sum of all four.
+
+If your browser cannot start workers, every boolean runs on the main thread instead, on the same
+code, with the same result. The only difference is the freeze.
+
+### Say what you want  `Ctrl`+`Shift`+`B`
+
+Type an instruction and get real features.
+
+```
+a 120 by 80 plate 8 thick in aluminium
+4 M6 clearance holes 40 apart
+a tube 40 across with a 3 wall, 50 long
+6 M8 tapped holes in a circle
+a 2 inch shaft 3 inches long
+```
+
+**This is a grammar, not a language model.** It knows shapes (box, plate, cylinder, tube, sphere,
+cone, torus, wedge, prism, pyramid, helix), units (mm, cm, m, inches, feet), thread callouts (M1.6
+to M36, clearance or tapped), counts, spacings and materials. It does not understand English, and
+when you write something outside that vocabulary it says so rather than guessing.
+
+Before anything is built you get a readback: every fact it took, in the app's own words, plus any
+word it could not act on. `a 60 box with chamfered corners` builds the box and tells you plainly
+that *chamfered* had no effect, because a silently ignored word is how you end up with the wrong
+part.
+
+Two things it does that matter afterwards:
+
+- **A count becomes a pattern**, not four separate holes, so you can change the number later.
+- **A standard size becomes a parameter.** `4 M6 clearance holes` declares `clear_m6 = 6.6` with
+  ISO 273 cited in its note, and drives the hole from it. Change the bolt size in one place and
+  every hole that uses it follows.
+
+Select a body first and a hole is cut from it. Select nothing and the hole arrives as a body for
+you to subtract yourself, which the dialog says at the time.
+
+### Fasteners
+
+Pick a size and a property class and you get what the standards say, not just a diameter.
+
+| | |
+|---|---|
+| Thread pitch, tensile stress area | ISO 724, ISO 898-1 |
+| Clearance hole, close / medium / free | ISO 273 |
+| Tapping drill | standard coarse thread |
+| Head, nut across-flats and height | ISO 4762, ISO 4032 |
+| Proof stress and tensile strength | ISO 898-1 by class |
+
+Note that **A2 stainless is weaker than 8.8**, not stronger. That one catches people.
+
+The tightening torque is the only modelled figure rather than a tabulated one, so it comes with its
+assumptions attached: `T = K·F·d` with K = 0.2 for a plain dry thread and F at 90% of proof load.
+Published torque tables are that same formula. Tick "lubricated" and K drops to 0.15, which is why
+the same torque gives more preload on an oiled thread.
+
+"Will the joint hold?" takes a load, a bolt count and a direction, and answers in tension or in
+shear at 0.6 Rm. It will also tell you the smallest bolt in the class that carries the load at
+safety factor 2, and clicking that sets it. Every answer carries the caveat that a real bolted
+joint usually fails at the thread, the clamped material or in fatigue long before the bolt reaches
+proof load.
+
+**Add to the model** gives you a shank and a head unioned into one body, so a bolt is something you
+can move and clash-check rather than a symbol.
+
+### Document health
+
+The problems that do not show up as modelling errors and do show up as a file that crashes, draws
+imprecisely, or takes forty megabytes to describe a bracket.
+
+**Geometry at survey coordinates.** A 32-bit float keeps about seven significant digits, so at
+500 km from the origin the smallest distance it can represent is 32 mm. A 0.1 mm feature cannot be
+positioned at all out there, and the symptom is a model that looks subtly wrong in ways nothing in
+the feature tree explains. The dialog quotes the real step at your distance. **Move the design to
+the origin** shifts every leaf feature by one vector, so relative positions are untouched and the
+geometry is computed near zero where precision is good; the coordinate you came from goes into the
+document notes so it is not lost. A position written as an expression is left alone and reported
+rather than rewritten.
+
+**Duplicated meshes.** Two imports with identical triangles are two copies of the same megabytes.
+Sharing one copy leaves every body exactly where it is: the transforms stay separate, only the
+triangles are shared.
+
+**Degenerate features.** A zero dimension, a pattern of one, a boolean with nothing to combine.
+Each produces nothing and costs a rebuild, and each is something you meant to finish.
+
+**Where the weight is.** Parametric features cost a couple of hundred bytes each however complex
+the shape; imported triangles cost what they weigh. That is usually the whole answer.
+
+### Offline and ownership
+
+Under **Help**. After one visit the whole application is on your machine: turn the network off,
+reload, and it opens. There is no account, no activation and no licence check, so there is nothing
+that can refuse to start.
+
+The panel lists what is kept here, named and sized, and every byte of it is in this browser on this
+machine. It offers to delete all of it. And it tells you how to check the network claim yourself
+rather than asking you to believe it: open your browser's network panel and reload, and after the
+first visit there is nothing to see.
+
+Needs https or localhost, because a service worker does. Clearing your browser data clears the
+local storage too, which is why a document you care about belongs in a saved file as well.
+
+---
+
 ## 6. Keyboard reference
 
 ### Everywhere
@@ -873,6 +1009,8 @@ open it, and opening it replaces the document you have, so save first.
 | `Ctrl`+`K` | command palette |
 | `Ctrl`+`Shift`+`D` | shop drawing |
 | `Ctrl`+`Shift`+`C` | design as code |
+| `Ctrl`+`Shift`+`B` | say what you want |
+| `Shift`+`H` | history, including branches you left |
 | `Q` | quick menu |
 | `Ctrl`+`S` / `Ctrl`+`⇧`+`S` | save / save as |
 | `Ctrl`+`O` / `Ctrl`+`N` / `Ctrl`+`I` | open / new / import |

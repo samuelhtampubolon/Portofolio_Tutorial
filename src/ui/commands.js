@@ -361,6 +361,13 @@ export function buildCommands(app) {
     keywords: 'bolt screw nut thread iso metric m6 m8 torque proof load clearance tapping drill washer hardware library',
   });
 
+  add('doc.health', 'Document health…', 'probe', 'Analyse', () => app.showHygiene(), {
+    keywords: 'hygiene weight size proxy far origin coordinates precision duplicate dedup empty degenerate crash bloat heavy',
+  });
+  add('app.ownership', 'Offline and ownership…', 'lock', 'Help', () => app.showOwnership(), {
+    keywords: 'offline install perpetual subscription privacy telemetry account licence phone home local storage data',
+  });
+
   /* ---------------------------------------------------------- merge */
 
   add('vcs.merge', 'Merge a branch…', 'merge', 'Versions', () => app.showMerge(), {
