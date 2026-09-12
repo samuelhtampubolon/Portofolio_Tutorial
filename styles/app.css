@@ -1433,3 +1433,25 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
   .spec-edit { font-size: 12px; min-height: 220px; }
   .dv-hist { height: 96px; }
 }
+
+/* A branch you left: reachable, and visibly not on the path you are on. */
+.hist-item.abandoned { opacity: .82; }
+.hist-item.abandoned .hn { font-style: italic; }
+.hist-item.abandoned svg { color: var(--warn); }
+.hist-item.abandoned:hover { opacity: 1; }
+
+/* ============================================================ typed intent */
+
+.sp-input {
+  width: 100%; font-size: 15px; padding: 10px 12px; flex: none;
+  background: var(--bg-inset); color: var(--txt);
+  border: 1px solid var(--line-strong); border-radius: var(--r-sm);
+}
+.sp-input:focus { border-color: var(--accent); }
+.sp-out { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; flex: none; }
+.sp-read { background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 8px 12px; }
+.sp-read h4 { margin: 0 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--txt-3); }
+.sp-read ul { margin: 0; padding-left: 18px; }
+.sp-read li { font-size: 12.5px; line-height: 1.55; }
+.sp-examples { display: flex; flex-wrap: wrap; gap: 5px; }
+.sp-examples .btn { font-size: 11.5px; }

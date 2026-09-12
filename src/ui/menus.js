@@ -169,7 +169,7 @@ export function menuDefs(app, c) {
 
     ['Studio', () => [
       { header: 'Start from a requirement' },
-      c('studio.brief'),
+      c('studio.brief'), c('speak.build'), c('lib.fasteners'),
       '-',
       { header: 'Check and cost' },
       c('studio.doctor'), c('studio.cost'),
@@ -199,6 +199,9 @@ export function menuDefs(app, c) {
       { header: 'Imported geometry' },
       c('studio.inspect'), c('dev.compare'),
       '-',
+      { header: 'The document itself' },
+      c('doc.health'),
+      '-',
       { header: 'Variants' },
       c('cfg.manage'), c('cfg.add'), c('cfg.next'), c('cfg.family'),
       '-',
@@ -210,6 +213,8 @@ export function menuDefs(app, c) {
       c('help.palette'), c('help.quickstart'), c('help.shortcuts'), c('help.expressions'),
       '-',
       c('help.learn'), c('help.guide'),
+      '-',
+      c('app.ownership'),
       '-',
       c('help.source'), c('help.issue'),
       '-',
@@ -267,6 +272,7 @@ export function ribbonDefs(app) {
     { label: 'Studio', items: ['studio.brief', 'studio.doctor', 'studio.cost', 'release.package'] },
     { label: 'Analyse', items: ['studio.section', 'studio.clash', 'tol.stack', 'cfg.manage', 'vcs.commit', 'vcs.browse'] },
     { label: 'Drawing', items: ['draw.sheet', 'spec.edit', 'vcs.merge'] },
+    { label: 'Intent', items: ['speak.build', 'lib.fasteners'] },
   ];
 }
 

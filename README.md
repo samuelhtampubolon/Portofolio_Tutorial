@@ -277,6 +277,173 @@ the round-trip check verifies that rather than the README asserting it.
 nothing can import is a file nobody trusts. So the export is invertible, and the app checks the
 inversion by doing it on your document and listing anything that did not survive.
 
+### Undo that never destroys the future
+
+<p align="center">
+<img src="docs/images/history-tree.png" alt="The history dialog showing two branches the user undid past and edited away from, both still reachable" width="760">
+</p>
+
+The most bitterly reported thing about all three packages is the same thing, and
+this codebase had it in exactly the form the complaints describe.
+
+> *"When I press undo, AutoCAD undoes my view change and not my command."*
+
+`toggleView`, `setShading` and the section-plane controls all went through the
+undo system, so turning the grid on was an undo step. How you are *looking* at a
+model is not a change to the model. They are written with `quiet` now: the
+setting still saves and still travels in the document, and is no longer an edit,
+because it never was one.
+
+> *"I accidentally hit my mouse wheel... AND NOW ALL OF MY REDOS ARE GONE FOREVER."*
+
+`commit()` did `redoStack.length = 0`. There is no reason for that: the states you
+undid past still exist, and a linear redo stack throws them away the moment you
+do anything else. **So history is a tree.** An edit after an undo adds a second
+child instead of truncating, and the abandoned future stays named and one click
+away under "Branches you left" for as long as the session lasts. Undo from a
+branch walks that branch; redo retraces the path you actually took. Pruning sheds
+the least recently visited leaves and never touches the path from the root to
+where you are, because that path is your undo chain.
+
+### The kernel uses your cores
+
+> *"Most core functions are single-threaded... can't multi-task."* *"SINGLE CORE? IN 2021?? COME ON!"*
+
+Users buy a 5 GHz six-core over a 3 GHz sixteen-core because the software cannot
+use the cores. In a browser that is solvable, so it is solved.
+
+`csg-core.js` is the BSP algorithm with no three.js in it, speaking flat typed
+arrays; `csg.js` is a thin adapter. The split sits at exactly that line because a
+module worker does not get the page's import map, so a file that says
+`import * as THREE from 'three'` cannot load in one while a file whose only
+imports are relative can. **There is one implementation of the maths**, so the
+worker and the fallback cannot drift apart.
+
+The pool starts one worker per core minus one, leaving a core for the interface,
+and dispatches with transferable buffers so a job copies nothing either way. The
+evaluator walks the document by dependency depth: everything at one depth is
+independent by construction, so a whole depth goes to the pool at once and the
+document's own structure says what may overlap. No scheduler needed.
+
+Measured in Chromium on four cores, four independent heavy booleans, with a 5 ms
+timer heartbeat (counting animation frames would measure the compositor, which
+under software rendering is slow whatever JavaScript is doing):
+
+| | total | worst main-thread block | heartbeats during rebuild |
+|---|---|---|---|
+| **with workers** | 1114 ms | **20 ms** | 209 |
+| without workers | 1493 ms | **1481 ms** | 1 |
+
+The thread goes from blocked solid for a second and a half to never blocked
+beyond about two frames, and four booleans at once beat four in a row. Both paths
+produce 37,936 triangles and the same volume to within floating point. No Worker
+constructor, a `file://` origin, a worker that fails to load: the pool reports
+itself unavailable and each boolean runs on the identical synchronous kernel.
+
+### Typed intent, and the honesty to say what it is
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/speak-intent.png" alt="A typed instruction read back as facts before anything is built"></td>
+<td width="50%"><img src="docs/images/fasteners.png" alt="An M8 bolt with its proof load, torque and hole sizes from the standards"></td>
+</tr>
+</table>
+
+> *"Users want to say 'extrude 20mm with 2mm fillet' and get an editable feature tree, not a dead mesh."*
+
+Everyone reaches for a language model for this, and this app has no server and no
+model by design. So it does the half that can be done properly offline and is
+explicit about which half that is. **It is a grammar, not a language model.** It
+recognises shapes, numbers, units, ISO thread callouts and counts, and refuses
+anything outside that vocabulary rather than guessing.
+
+The refusal is the feature. `please make it nicer` is declined with a list of
+what it does know. `a 60 box with chamfered corners and a knurled finish` builds
+the box and says plainly that *chamfered* and *knurled* had no effect. Every
+parse reports back exactly what it took, in the app's own words, before anything
+is built.
+
+Two rules keep the output editable rather than disposable. A count becomes a
+**pattern feature**, not n copies, because a pattern is the thing you can change
+your mind about. And a dimension from a named standard becomes a **parameter
+reference**: `4 M6 clearance holes` declares `clear_m6 = 6.6` with ISO 273 cited
+in its note and sets the hole radius to `clear_m6 / 2`, so the intent survives as
+intent instead of decaying into the number 6.6.
+
+### Components that know more than their shape
+
+> *"Hole Wizard is extremely useful"* and *"no great built-in way to create clean BOMs from assemblies without putting in a lot of work."*
+
+Both are true at once because a component in CAD is a shape and nothing else.
+Drop in an M8 and the model knows its diameter; it does not know the proof load,
+what to torque it to, what drill to use for the tapped hole, or what to call it
+on a purchase order.
+
+So the fastener library carries all of it, from the standards: pitch and tensile
+stress area (ISO 724, ISO 898-1), clearance holes in all three classes (ISO 273),
+tapping drills, head and nut sizes (ISO 4762, ISO 4032), and proof stress by
+property class — including the thing people get wrong, that **A2 stainless is
+weaker than 8.8**, not stronger.
+
+The one modelled figure is the tightening torque, and it says so rather than
+hiding it: `T = K·F·d` with K = 0.2 for a plain dry thread and F at 90% of proof
+load. Published torque tables are that same formula, and the friction coefficient
+is the part nobody can promise, so the assumption is returned with the number and
+changes when you tick "lubricated".
+
+`identifyHole` closes the loop with mesh recognition: a hole measured in an
+imported part comes back as "M6 medium clearance" rather than as 6.6.
+
+### What actually kills a large file
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/doc-health.png" alt="Document health reporting the real float32 precision loss at survey coordinates"></td>
+<td width="50%"><img src="docs/images/ownership.png" alt="The offline and ownership panel listing what is stored locally and what the app sends"></td>
+</tr>
+</table>
+
+> *"contains proxy objects from Civil 3D... very high coordinates... zoom extents makes objects smaller than a pixel."* Crashes diagnosed as *"remove proxy objects."*
+
+None of that is a geometry problem. **Geometry at survey coordinates loses
+precision**, and that is arithmetic rather than opinion: a 32-bit float keeps
+about seven significant digits, so at 500 km from the origin the smallest
+representable step is 32 mm and a 0.1 mm feature cannot be positioned at all.
+This is the one that makes a model look subtly wrong in ways nothing in the
+feature tree explains. Document health reports the true step at your distance,
+verified against `Float32Array` itself rather than against a rule of thumb.
+
+The repair moves only the **leaf** features, all by the same vector, and that is
+exactly the right set for two reasons that pull opposite ways until you look at
+what a transform means. A leaf's position is absolute, so moving it moves
+geometry; a derived feature's position is an offset on top of its inputs, so
+moving it too would move the result twice. And leaves are the set that *has* to
+move: shifting only the top-level bodies would leave a boolean's inputs out at
+survey coordinates, so it would still be **computed** there, and the precision
+problem would survive the repair with the body merely appearing near the origin.
+
+Also found: duplicated mesh payloads, hashed and shared so every body keeps its
+own transform while the triangles are shared once; zero dimensions, patterns of
+one and booleans with nothing to combine; and where the document's bytes actually
+are, so "why is this file 40 megabytes" has an answer.
+
+### Ownership you can check rather than take on trust
+
+> *"You cannot buy a perpetual licence... tools also phone home every few days."* *"Perpetual means never ending... will no longer allow me to use my software by refusing to activate it."*
+
+No feature fixes somebody else's licence server. What this application can do is
+make its own position **checkable instead of asserted**. A service worker caches
+all 62 files on first visit, so after that it opens and runs with the network off,
+forever, with no check and nothing to activate. There is no server to ask for
+permission because there is no server.
+
+The test for this is the only one worth having: the browser context is forced
+offline and the page reloaded. It loads, builds the model, and the boolean
+workers come from the cache too. The Offline panel states what is kept (named,
+with sizes, all of it in this browser), offers to delete every byte of it, and
+tells you how to verify the network claim yourself: open the network panel and
+reload, and after the first visit there is nothing to see.
+
 ### Configurations, version control and export that respects tolerance
 
 **Configurations** put every size of a part in one file. A configuration stores only the parameters
@@ -442,6 +609,24 @@ value is a gesture, not a type-tab-commit cycle.
 - **Bake dynamics to keyframes** to hand-edit a physics result.
 - **Record the timeline to video** (WebM) using the browser's own encoder.
 
+**Performance, history and trust**
+- **The boolean kernel runs in worker threads**, one per core minus one, with
+  independent booleans evaluated concurrently by dependency depth. Worst
+  main-thread block on four heavy booleans: 20 ms with workers, 1481 ms without.
+- **Undo is a tree**, so an edit after an undo branches instead of destroying
+  what you undid. View settings are not undo steps at all.
+- **Runs offline**, forever, after one visit: a service worker caches all 62
+  files. No account, no activation, no telemetry, nothing to phone home.
+- **Document health**: survey-coordinate precision loss quoted as the real
+  float32 step, duplicated mesh payloads shared, degenerate features found, and
+  where the bytes are.
+- **Typed intent**: a grammar (not a language model) that turns "4 M6 clearance
+  holes 40 apart" into a hole plus a pattern, driven by a named parameter, and
+  refuses what it does not understand instead of guessing.
+- **Fasteners with engineering data**: proof load, tightening torque with its
+  friction assumption stated, clearance and tapping drills, ISO designations,
+  flowing into the BOM.
+
 **Engineering**
 - **Shop drawings**: orthographic views on A4/A3/A2 at a standard scale, hidden lines classified
   rather than guessed, hole callouts with the nearest standard size, a filled title block, and
@@ -504,17 +689,17 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **394 headless checks** across six suites, in about two seconds. It shims
+This runs **645 headless checks** across eleven suites, in about three seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 
 ```
-ok   core            58 checks
-ok   drawing         37 checks
-ok   tolerance       77 checks
-ok   merge           74 checks
-ok   design as code  87 checks
-ok   deviation       61 checks
+ok   core            58 checks      ok   drawing         37 checks
+ok   history         40 checks      ok   tolerance       77 checks
+ok   parallel        29 checks      ok   merge           74 checks
+ok   grammar         61 checks      ok   design as code  87 checks
+ok   fasteners       73 checks      ok   deviation       61 checks
+ok   hygiene         48 checks
 ```
 
 `npm run test:core` runs just the first one, which is the expression evaluator, the CSG kernel, the
@@ -530,10 +715,17 @@ smooth cylinder against the sagitta; the projection convention by **measuring wh
 rather than by reading the label; and the design-as-code round trip by doing it and diffing the
 result rather than asserting it works.
 
-Another seven suites drive a real headless Chromium against a local server, adding roughly 300 more
+Where a claim is about the standards, the check is a cross-reference against the published value:
+M8 class 8.8 proof load 21.2 kN, M6 clearance 6.6 mm, an M8 tapping drill 6.8 mm, and every tapping
+drill within a third of a millimetre of nominal minus pitch, which is what a tapping drill is. Where
+a claim is about arithmetic, the check is against the arithmetic: float32 precision is verified
+against `Float32Array` itself, not against a formula this repo wrote.
+
+Another nine suites drive a real headless Chromium against a local server, adding roughly 350 more
 checks. They need Playwright, so they are not part of `npm test`, but they are what caught the phone
 chrome leaking onto the desktop layout, a 21-pixel touch target, and a drawing dialog that read a
-field by the wrong name.
+field by the wrong name. Two of them make claims that only a browser can settle: that a boolean
+really leaves the main thread, and that the app really opens with the network forced off.
 
 ## Deploying your own copy
 
@@ -657,6 +849,21 @@ It is worth being clear about what this is not, so you can decide whether it fit
 - **The merge is over the feature tree, not the geometry.** It is a real three-way merge on the
   records that produce the shape, which is what makes it possible at all; it does not reason about
   whether the merged result is a sensible solid. Check the rebuild afterwards.
+- **Typed intent is a grammar, not a language model.** It reads a vocabulary of
+  shapes, numbers, units, thread callouts and counts. It does not understand
+  English, cannot infer a shape you did not name, and will not guess: anything
+  outside the vocabulary is refused with a list of what it does know. That is a
+  deliberate trade, not a stepping stone to a model.
+- **Worker threads help booleans, not everything.** Tessellating primitives,
+  measuring mass properties and running the Doctor are still main-thread work.
+  The evaluator yields whenever it has held the thread for longer than a frame,
+  which turns one long stall into several short ones, but a very large document
+  is still not instant.
+- **History lives for the session.** The tree keeps every branch you left until
+  you close the tab. It is not written to the saved file; that is what the
+  version store with its named snapshots and branches is for.
+- **Offline needs https or localhost**, because a service worker does, and one
+  visit online to populate the cache. After that it never needs a network again.
 - **The deviation map samples.** It caps the number of measured points so it finishes on a click,
   so the peak is the worst of what was sampled rather than the worst that exists. The RMS is the
   more robust number of the two.

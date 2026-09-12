@@ -13,7 +13,8 @@ import {
   store, newDocument, makeFeature, makeLayer, catalogOf, CATALOG, MATERIALS, UNITS,
   saveLocal, loadLocal, clearLocal, APP_NAME, APP_VERSION, FILE_EXT, toDisplay, uid,
 } from './core/doc.js';
-import { rebuild, invalidateCache, massProperties } from './core/rebuild.js';
+import { rebuild, rebuildAsync, invalidateCache, massProperties } from './core/rebuild.js';
+import { pool as csgPool } from './core/csg-pool.js';
 import { evalSafe, EXPR_HELP } from './core/expr.js';
 import { Viewport } from './view/viewport.js';
 import { Draft2D, DRAW_TOOLS, fmt, rotateEntity, scaleEntity, mirrorEntity, entityBBox } from './draft/draft.js';
@@ -48,6 +49,10 @@ import * as Tol from './intel/tolerance.js';
 import * as Merge from './intel/merge.js';
 import * as Spec from './intel/spec.js';
 import * as Dev from './intel/deviation.js';
+import * as Speak from './intel/speak.js';
+import * as Fast from './intel/fasteners.js';
+import * as Hygiene from './intel/hygiene.js';
+import * as Offline from './intel/offline.js';
 import { toDXF } from './draft/dxf.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
@@ -139,12 +144,18 @@ class App {
 
     this.restoreSession();
     this.setWorkspace('model');
-    this.rebuildNow();
     this.draft.start();
     this.draft.resize();
     this.renderLearn();
-    // Frame after the chrome has laid out, so the camera sees the real canvas.
-    requestAnimationFrame(() => requestAnimationFrame(() => this.vp.frameAll()));
+    // The first rebuild is awaited before framing: it is asynchronous now, and
+    // a camera framed before the first body exists frames nothing. Two frames
+    // after it, so the chrome has laid out and the canvas is its real size.
+    this.rebuildNow().then(() => {
+      requestAnimationFrame(() => requestAnimationFrame(() => this.vp.frameAll()));
+      // The offline copy is registered after the first frame, never before:
+      // caching sixty files must not compete with getting a model on screen.
+      Offline.install().then((r) => { this._offline = r; });
+    });
 
     this._autosave = setInterval(() => { if (store.dirty) { saveLocal(); this.markSaved(); } }, Math.max(5, this.prefs.autosaveSec) * 1000);
     addEventListener('beforeunload', (e) => {
@@ -319,10 +330,37 @@ class App {
     this._rebuildTimer = setTimeout(() => this.rebuildNow(), 8);
   }
 
-  rebuildNow() {
+  /**
+   * Rebuild, with the booleans off this thread.
+   *
+   * The rebuild is asynchronous because the expensive part of it now runs in
+   * worker threads, which is the difference between a window that keeps
+   * responding during a heavy boolean and one that does not. Two consequences
+   * are handled here rather than pushed onto callers:
+   *
+   * A rebuild can be superseded while it is in flight. Every run takes a
+   * ticket, and a run that finds a newer ticket on completion drops its own
+   * result instead of drawing a model the user has already edited past.
+   *
+   * Everything after the await is the same work in the same order as before,
+   * so nothing downstream has to know the rebuild ever yielded.
+   */
+  async rebuildNow() {
+    const ticket = (this._buildTicket = (this._buildTicket || 0) + 1);
     const t0 = performance.now();
-    try { this.build = rebuild(store.doc); }
-    catch (err) { console.error(err); this.flash(`Rebuild failed: ${err.message}`, 'err', 6000); return; }
+    let build;
+    try {
+      build = await rebuildAsync(store.doc);
+    } catch (err) {
+      console.error(err);
+      if (ticket === this._buildTicket) this.flash(`Rebuild failed: ${err.message}`, 'err', 6000);
+      return;
+    }
+    // A newer edit started its own rebuild while this one was running. That
+    // one is the truth; this result is already stale, so it is discarded.
+    if (ticket !== this._buildTicket) return;
+
+    this.build = build;
     this.buildMs = performance.now() - t0;
     this.vp.syncBodies(this.build);
     this.sim.refreshPivots();
@@ -1071,14 +1109,24 @@ class App {
     this.draft.invalidate();
   }
 
+  /**
+   * View settings never enter the model's history.
+   *
+   * This is the single most bitterly reported thing about the packages this
+   * one imitates: you press undo expecting your last edit back and instead the
+   * grid turns on. How you are *looking* at a model is not a change to the
+   * model, so it is written with `quiet` rather than `edit`. It still saves,
+   * still travels in the document, and still marks the file dirty. It simply
+   * is not an undo step, because it was never an edit.
+   */
   toggleView(key) {
-    store.edit('View setting', (d) => { d.view[key] = !d.view[key]; }, { rebuild: false });
+    store.quiet((d) => { d.view[key] = !d.view[key]; });
     this.applyView();
     this.refreshUI();
   }
 
   setShading(mode) {
-    store.edit('Shading', (d) => { d.view.shading = mode; }, { rebuild: false });
+    store.quiet((d) => { d.view.shading = mode; });
     this.refreshBodies(true);
   }
 
@@ -1090,13 +1138,13 @@ class App {
   }
 
   setBackground(bg) {
-    store.edit('Background', (d) => { d.view.bg = bg; }, { rebuild: false });
+    store.quiet((d) => { d.view.bg = bg; });
     this.applyView();
     this.refreshUI();
   }
 
   toggleSection() {
-    store.edit('Section', (d) => { d.view.clip.enabled = !d.view.clip.enabled; }, { rebuild: false });
+    store.quiet((d) => { d.view.clip.enabled = !d.view.clip.enabled; });
     this.applyView();
     this.refreshUI();
   }
@@ -1608,33 +1656,51 @@ class App {
 
   /* ============================================================ dialogs */
 
+  /**
+   * The history dialog, which is where the tree earns its keep.
+   *
+   * Three groups: what you can go back to, where you are, and what is ahead.
+   * Then a fourth that no linear undo stack can offer at all: the states you
+   * undid past and then edited away from. In every other package those are
+   * gone. Here they are a click away for as long as the session lasts.
+   */
   showHistory() {
-    const undo = store.undoStack;
-    const redo = store.redoStack;
-    const rows = [];
-    undo.forEach((h, i) => rows.push({ label: h.label, i, kind: 'past' }));
-    rows.push({ label: 'Current state', kind: 'now' });
-    [...redo].reverse().forEach((h) => rows.push({ label: h.label, kind: 'future' }));
+    const t = store.timeline();
+    const body = el('div');
 
-    const list = el('div', { class: 'hist-list' }, rows.map((r, k) => el('div', {
-      class: `hist-item ${r.kind === 'now' ? 'now' : r.kind === 'future' ? 'future' : ''}`,
+    const row = (entry, kind) => el('div', {
+      class: `hist-item ${kind}`,
       onclick: () => {
-        const nowIndex = undo.length;
-        if (k < nowIndex) { for (let n = 0; n < nowIndex - k; n++) store.undo(); }
-        else if (k > nowIndex) { for (let n = 0; n < k - nowIndex; n++) store.redo(); }
+        if (kind !== 'now') { store.gotoNode(entry.id); this.refreshUI(); }
         closeModal();
-        this.refreshUI();
       },
     }, [
-      icon(r.kind === 'now' ? 'target' : r.kind === 'future' ? 'redo' : 'undo', { size: 14 }),
-      el('span', { class: 'hn', text: r.label }),
-      el('span', { class: 'hi', text: r.kind === 'now' ? 'you are here' : '' }),
-    ])));
+      icon(kind === 'now' ? 'target' : kind === 'future' ? 'redo' : kind === 'abandoned' ? 'merge' : 'undo', { size: 14 }),
+      el('span', { class: 'hn', text: entry.label }),
+      el('span', { class: 'hi', text: kind === 'now' ? 'you are here' : '' }),
+    ]);
+
+    if (!t.past.length && !t.future.length && !t.abandoned.length) {
+      body.appendChild(emptyState('Nothing to undo yet', 'Every edit you make lands here. View settings do not: changing the grid or the shading is not an edit, so it never costs you an undo.', 'history'));
+    } else {
+      body.appendChild(el('div', { class: 'hist-list' }, [
+        ...t.past.map(p => row(p, 'past')),
+        row(t.now, 'now'),
+        ...t.future.map(f => row(f, 'future')),
+      ]));
+      if (t.abandoned.length) {
+        body.appendChild(section(`Branches you left · ${t.abandoned.length}`, [
+          el('p', { class: 'hint', text: 'These are states you undid past and then edited away from. A linear undo stack throws them away the moment you make that next edit; here they are still reachable. Click one to go back to it, and the branch you are on now stays reachable too.' }),
+          el('div', { class: 'hist-list' }, t.abandoned.slice(0, 40).map(a => row(a, 'abandoned'))),
+        ], true, { icon: 'merge' }));
+      }
+    }
 
     modal({
-      title: 'Undo history', icon: 'history',
-      subtitle: `${undo.length} step${undo.length === 1 ? '' : 's'} back, ${redo.length} forward. Click any step to jump there.`,
-      body: [undo.length || redo.length ? list : emptyState('Nothing to undo yet', 'Every edit you make lands here.', 'history')],
+      title: 'History', icon: 'history', wide: !!t.abandoned.length,
+      subtitle: `${t.past.length} step${t.past.length === 1 ? '' : 's'} back, ${t.future.length} forward` +
+        (t.abandoned.length ? `, ${t.abandoned.length} on branches you left` : ''),
+      body,
       actions: [{ label: 'Close', primary: true }],
     });
   }
@@ -3916,6 +3982,375 @@ class App {
           this.flash(`Imported ${r.doc.features.length} features from design intent.`, 'ok');
         } },
         { label: 'Cancel' },
+      ],
+    });
+  }
+
+
+  /* ========================================================== typed intent */
+
+  /**
+   * Say what you want, in the vocabulary the app knows.
+   *
+   * The readback is the whole design of this dialog. It is not a language
+   * model and it must never pretend to be one, so before anything is built it
+   * shows every fact it took from the sentence, in the app's own words, and
+   * lists any word it could not act on. A co-pilot that quietly does the wrong
+   * thing costs more than one that says it did not follow you.
+   */
+  showSpeak() {
+    const input = el('input', {
+      type: 'text', class: 'sp-input', spellcheck: 'false',
+      placeholder: 'a 120 by 80 plate 8 thick in aluminium',
+    });
+    const out = el('div', { class: 'sp-out' });
+    let current = null;
+
+    const target = [...this.selection][0] || null;
+    const targetName = target ? (store.feature(target)?.name || null) : null;
+
+    const read = () => {
+      const text = input.value.trim();
+      clear(out);
+      current = null;
+      if (!text) {
+        out.appendChild(el('div', { class: 'hint', text: 'Type an instruction and the effect appears here before anything is built.' }));
+        return;
+      }
+      const r = Speak.interpret(text, { doc: store.doc, target });
+      if (!r.ok) {
+        out.appendChild(el('div', { class: 'banner err', text: r.why }));
+        return;
+      }
+      current = r;
+
+      out.append(
+        el('div', { class: 'sp-read' }, [
+          el('h4', { text: 'What that says' }),
+          el('ul', {}, r.understood.map(u => el('li', { text: u }))),
+        ]),
+        el('div', { class: 'sp-read' }, [
+          el('h4', { text: 'What it would build' }),
+          el('ul', {}, r.features.map(f => el('li', {
+            text: `${f.name} (${CATALOG[f.type].label})` +
+              (f.inputs.length ? ` from ${f.inputs.length} input${f.inputs.length === 1 ? '' : 's'}` : '') +
+              `: ${Object.entries(f.params).filter(([, v]) => v !== undefined)
+                .map(([k, v]) => `${k} ${v}`).join(', ')}`,
+          }))),
+        ]),
+      );
+      if (r.params.length) {
+        out.appendChild(el('div', { class: 'sp-read' }, [
+          el('h4', { text: 'Parameters it would declare' }),
+          el('ul', {}, r.params.map(p => el('li', { text: `${p.name} = ${p.value}${p.note ? `  (${p.note})` : ''}` }))),
+        ]));
+      }
+      if (r.unknown.length) {
+        out.appendChild(el('div', { class: 'banner warn', text:
+          `Ignored: ${r.unknown.join(', ')}. This reads a vocabulary rather than English, so those words had no effect. Nothing was guessed from them.` }));
+      }
+      for (const n of r.notes) out.appendChild(el('div', { class: 'dx-item', text: n }));
+    };
+
+    let timer = null;
+    input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(read, 140); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && current) { e.preventDefault(); apply(); }
+    });
+
+    const apply = () => {
+      if (!current) { this.flash('Nothing to build yet.', 'warn'); return; }
+      const r = current;
+      store.batch(`Build: ${input.value.trim().slice(0, 40)}`, () => {
+        const d = store.doc;
+        for (const p of r.params) d.params.push({ id: uid('p'), ...p });
+        for (const f of r.features) d.features.push(f);
+      });
+      this.selection.clear();
+      this.selection.add(r.features.at(-1).id);
+      this.rebuildNow();
+      this.flash(`${r.understood[0]}. Ctrl Z puts it back.`, 'ok', 4200);
+      closeModal();
+    };
+
+    read();
+    const body = el('div', {}, [
+      el('p', { class: 'hint', text: 'A grammar, not a language model. It recognises shapes, numbers, units, thread callouts and counts, and refuses anything outside that vocabulary rather than guessing. Everything it builds is a normal feature you can edit, drag and drive from a parameter afterwards.' }),
+      input,
+      targetName
+        ? el('div', { class: 'hint', text: `"${targetName}" is selected, so a hole will be cut from it.` })
+        : el('div', { class: 'hint', text: 'Nothing is selected, so a hole would arrive as a body to subtract yourself.' }),
+      out,
+      section('Things it understands', [
+        el('div', { class: 'sp-examples' }, Speak.EXAMPLES.map(ex => {
+          const b = el('button', { class: 'btn tiny', text: ex });
+          b.addEventListener('click', () => { input.value = ex; read(); input.focus(); });
+          return b;
+        })),
+        el('div', { class: 'hint', text: 'Shapes: box, plate, cylinder, tube, sphere, cone, torus, wedge, prism, pyramid, helix. Units: mm, cm, m, inches, feet. Threads: M1.6 to M36, clearance or tapped, from ISO 273. Counts become patterns, so you can change your mind about the number afterwards.' }),
+      ], false, { icon: 'book' }),
+    ]);
+
+    modal({
+      title: 'Say what you want', icon: 'command', wide: true,
+      subtitle: 'Typed intent, turned into real features',
+      body,
+      actions: [
+        { label: 'Build it', primary: true, run: () => { apply(); return true; } },
+        { label: 'Cancel' },
+      ],
+    });
+    setTimeout(() => input.focus(), 30);
+  }
+
+
+  /* =========================================================== fasteners */
+
+  /**
+   * The fastener library.
+   *
+   * A component in CAD is normally a shape and nothing else, so the proof
+   * load, the torque, the tapping drill and the purchase-order description all
+   * get looked up by hand. They are all published numbers, so they are here,
+   * next to the geometry, and they travel with it into the bill of materials.
+   */
+  showFasteners() {
+    let size = 'M8';
+    let cls = '8.8';
+    let length = 30;
+    let fit = 'medium';
+    let lubricated = false;
+    let load = 5000;
+    let count = 4;
+    let shear = false;
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      const s = Fast.spec(size, { cls, length, fit, lubricated });
+      const j = Fast.checkJoint(size, { cls, load, count, shear, safety: 2, lubricated });
+      const sev = j.utilisation <= 0.5 ? 'ok' : j.pass ? 'warn' : 'err';
+
+      host.append(
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Size' }),
+          select(size, Fast.SIZES.map(x => [x, x]), (v) => { size = v; draw(); }),
+        ]),
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Property class' }),
+          select(cls, Object.keys(Fast.CLASSES).map(x => [x, x]), (v) => { cls = v; draw(); }),
+        ]),
+        el('div', { class: 'hint', text: Fast.CLASSES[cls].note }),
+        numRow('Length (mm)', length, (v) => { length = Math.max(2, v); draw(); }),
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Clearance' }),
+          segmented(fit, [['close', 'Close'], ['medium', 'Medium'], ['free', 'Free']], (v) => { fit = v; draw(); }),
+        ]),
+
+        section('What this bolt is', [kv([
+          ['Designation', `${s.designation}, ${s.standard}`],
+          ['Thread pitch', `${s.pitch} mm (coarse, ISO 724)`],
+          ['Tensile stress area', `${s.tensileArea} mm²`],
+          ['Proof stress', `${s.proofStress} N/mm²`],
+          ['Proof load', `${(s.proofLoadN / 1000).toFixed(1)} kN`],
+          ['Clearance hole', `⌀${s.clearanceHole} mm (${s.clearanceFit}, ISO 273)`],
+          ['Tapping drill', `⌀${s.tappingDrill} mm`],
+          ['Min thread engagement', `${s.minThreadEngagement} mm`],
+          ['Head', `⌀${s.headDiameter} × ${s.headHeight} mm`],
+          ['Nut', `${s.nutAcrossFlats} A/F × ${s.nutHeight} mm, ISO 4032`],
+        ])], true, { icon: 'key' }),
+        el('div', { class: 'hint', text: s.engagementNote }),
+
+        section('Tightening', [
+          checkbox('Lubricated thread', lubricated, (v) => { lubricated = v; draw(); }),
+          el('div', { class: 'banner ok', text: `${s.torqueNm} N·m to reach ${(s.preloadN / 1000).toFixed(1)} kN of preload.` }),
+          el('div', { class: 'hint', text: s.torqueBasis }),
+        ], true, { icon: 'rotate' }),
+
+        section('Will the joint hold?', [
+          numRow('Total load (N)', load, (v) => { load = Math.max(0, v); draw(); }),
+          numRow('Number of bolts', count, (v) => { count = Math.max(1, Math.round(v)); draw(); }),
+          checkbox('Loaded in shear rather than tension', shear, (v) => { shear = v; draw(); }),
+          el('div', { class: `banner ${sev}`, text:
+            `${j.per} N per bolt against ${j.allowableN} N allowable in ${j.mode} at safety factor ${j.safety}. ` +
+            `${(j.utilisation * 100).toFixed(0)}% used. ${j.verdict}.` }),
+          (() => {
+            const smallest = Fast.sizeFor({ load, count, cls, shear, safety: 2 });
+            const b = el('button', { class: 'btn', text: smallest
+              ? `Smallest class ${cls} bolt that holds this: ${smallest.size}`
+              : 'No bolt in this library carries that load' });
+            if (smallest) b.addEventListener('click', () => { size = smallest.size; draw(); });
+            return b;
+          })(),
+        ], true, { icon: 'physics' }),
+        el('div', { class: 'banner warn', text: j.caveat }),
+      );
+    };
+    draw();
+
+    modal({
+      title: 'Fasteners', icon: 'key', wide: true, size: 'tall',
+      subtitle: 'ISO metric, with the data a drawing and a purchase order need',
+      body: host,
+      actions: [
+        { label: 'Add to the model', run: () => {
+          const made = Fast.featuresFor(size, { length, cls }, makeFeature);
+          store.batch(`Add ${made.spec.designation}`, () => {
+            store.doc.features.push(...made.features);
+          });
+          this.selection.clear();
+          this.selection.add(made.features.at(-1).id);
+          this.rebuildNow();
+          this.flash(`${made.spec.designation} added. Torque ${made.spec.torqueNm} N·m.`, 'ok', 5000);
+        } },
+        { label: 'Close', primary: true },
+      ],
+    });
+  }
+
+
+  /* ====================================================== hygiene, offline */
+
+  /**
+   * What is making this document heavy, and what is quietly wrong with it.
+   *
+   * Every finding here is the kind that does not show up as a modelling error
+   * and does show up as a file that crashes, draws imprecisely, or takes forty
+   * megabytes to describe a bracket.
+   */
+  showHygiene() {
+    const host = el('div');
+    const draw = () => {
+      clear(host);
+      const r = Hygiene.inspect(store.doc, this.build);
+      const w = r.weight;
+
+      host.append(
+        el('div', { class: `banner ${r.clean ? 'ok' : r.issues[0].severity === 'block' ? 'err' : 'warn'}`,
+          text: Hygiene.summary(r) }),
+        el('div', { class: 'merge-stats' }, [
+          el('div', { class: 'big-stat' }, [el('strong', { text: String(w.features) }), el('span', { text: 'features' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: `${(w.totalBytes / 1024).toFixed(0)} kB` }), el('span', { text: 'document' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: `${(w.meshShare * 100).toFixed(0)}%` }), el('span', { text: 'imported mesh' })]),
+          el('div', { class: 'big-stat' }, [el('strong', { text: String(w.drawEntities) }), el('span', { text: 'draft entities' })]),
+        ]),
+      );
+
+      if (!r.clean) {
+        host.appendChild(section(`Findings · ${r.issues.length}`, r.issues.map(i => {
+          const rows = [
+            el('div', { class: 'dx-sev', text: i.severity === 'block' ? 'Serious' : i.severity === 'warn' ? 'Worth fixing' : 'Note' }),
+            el('strong', { text: i.title }),
+            el('div', { text: i.detail }),
+            el('div', { class: 'dx-why', text: i.why }),
+          ];
+          if (i.fix) {
+            const b = el('button', { class: 'btn', text: i.fix.label });
+            b.addEventListener('click', () => {
+              try {
+                i.fix.apply(store);
+                this.rebuildNow();
+                this.flash(`${i.fix.label}. Ctrl Z puts it back.`, 'ok', 4200);
+                draw();
+              } catch (err) { this.flash(`Could not apply that: ${err.message}`, 'err'); }
+            });
+            rows.push(b);
+          }
+          return el('div', { class: `dx-item ${i.severity === 'block' ? 'err' : i.severity}` }, rows);
+        }), true, { icon: 'warning' }));
+      }
+
+      host.appendChild(section('Where the weight is', [
+        el('div', { class: 'fit-table' }, [
+          el('div', { class: 'fit-head' }, ['Feature', 'Type', 'Size', '', ''].map(t => el('span', { text: t }))),
+          ...w.heaviest.map(row => el('div', { class: 'fit-row' }, [
+            el('strong', { text: row.name }),
+            el('span', { text: CATALOG[row.type]?.label || row.type }),
+            el('span', { class: 'mono', text: `${(row.bytes / 1024).toFixed(1)} kB` }),
+            el('span'), el('span'),
+          ])),
+        ]),
+        el('div', { class: 'hint', text: 'Sizes are of the saved JSON. Parametric features cost a couple of hundred bytes each however complex the shape they produce; imported triangles cost what they weigh, which is why a scan dominates a document the moment one arrives.' }),
+      ], true, { icon: 'mass' }));
+
+      host.appendChild(el('div', { class: 'banner warn', text: 'Precision figures are the real gaps between 32-bit floats at the distances involved, not a rule of thumb. At 500 km from the origin the smallest representable step is 32 mm, which is why geometry at survey coordinates looks subtly wrong in ways nothing in the feature tree explains.' }));
+    };
+    draw();
+
+    modal({
+      title: 'Document health', icon: 'probe', wide: true, size: 'tall',
+      subtitle: store.doc.meta.name,
+      body: host,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  /**
+   * What this application keeps, and what it sends.
+   *
+   * The honest answer to the subscription and phone-home complaints is not a
+   * promise in a licence, it is a property of the software that the user can
+   * check. So this says exactly what is on the machine, offers to delete it,
+   * and tells them how to verify the network claim themselves.
+   */
+  async showOwnership() {
+    const st = await Offline.status();
+    const rows = Offline.localData();
+    const total = rows.reduce((n, r) => n + r.bytes, 0);
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      host.append(
+        el('div', { class: `banner ${st.controlled ? 'ok' : 'warn'}`, text: st.controlled
+          ? `Installed. ${st.files} files, ${(st.cachedBytes / 1024 / 1024).toFixed(1)} MB on this machine. Turn the network off and reload: it will still open.`
+          : st.supported
+            ? (this._offline?.ok
+              ? 'Installing. Reload once and the offline copy takes over; nothing else changes.'
+              : `Not installed: ${this._offline?.reason || 'the offline copy has not registered yet.'}`)
+            : 'This browser cannot keep an offline copy. Everything else works the same; you just need the page to load.' }),
+
+        section('What it sends', [
+          el('ul', {}, Offline.NETWORK_FACTS.map(f => el('li', { text: f }))),
+        ], true, { icon: 'info' }),
+
+        section(`What it keeps here · ${(total / 1024).toFixed(0)} kB`, [
+          el('div', { class: 'fit-table' }, [
+            el('div', { class: 'fit-head' }, ['Stored', 'What it is', 'Size', '', ''].map(t => el('span', { text: t }))),
+            ...rows.map(r => el('div', { class: 'fit-row' }, [
+              el('strong', { text: r.present ? 'yes' : 'nothing yet' }),
+              el('span', { text: r.what }),
+              el('span', { class: 'mono', text: r.bytes ? `${(r.bytes / 1024).toFixed(1)} kB` : '—' }),
+              el('span'), el('span'),
+            ])),
+          ]),
+          el('div', { class: 'hint', text: 'All of it is in this browser’s local storage, on this machine, readable by you and by nothing else. It never leaves. Clearing your browser data clears it, which is why a document you care about belongs in a saved file as well.' }),
+        ], true, { icon: 'lock' }),
+
+        el('div', { class: 'banner warn', text: 'The licence is MIT and the source is in the repository, so this cannot be taken away from you: a copy of the files is a working copy of the application. Nothing here checks a licence, so nothing here can refuse to start.' }),
+      );
+    };
+    draw();
+
+    modal({
+      title: 'Offline and ownership', icon: 'lock', wide: true,
+      subtitle: st.controlled ? 'Running from your machine' : 'Runs in this browser, no account',
+      body: host,
+      actions: [
+        { label: 'Forget everything stored', danger: true, run: () => {
+          confirmDialog('Delete everything stored in this browser?',
+            'Your saved versions, standards, decisions, macros and the autosaved document all go. Files you exported are untouched. This cannot be undone.',
+            () => {
+              const gone = Offline.forgetEverything();
+              this.flash(`Removed ${gone.length} stored item${gone.length === 1 ? '' : 's'}. Reload to start clean.`, 'ok', 5000);
+            }, { danger: true, yes: 'Delete it all' });
+        } },
+        { label: 'Remove the offline copy', run: async () => {
+          const r = await Offline.uninstall();
+          this.flash(`Offline copy removed (${r.caches} cache${r.caches === 1 ? '' : 's'}). The app will load from the network again.`, 'ok', 5000);
+          return true;
+        } },
+        { label: 'Close', primary: true },
       ],
     });
   }

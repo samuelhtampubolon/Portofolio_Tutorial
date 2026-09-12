@@ -8,7 +8,8 @@
  */
 import * as THREE from 'three';
 import { buildScope, evaluate } from './expr.js';
-import { booleanGeometries } from './csg.js';
+import { booleanGeometries, operandsToArrays, trianglesToGeometry } from './csg.js';
+import { pool, isWorkerUnavailable } from './csg-pool.js';
 import {
   buildPrimitive, buildExtrude, buildRevolve, shapesFromEntities,
   transformMatrix, recentre, triangleCount,
@@ -304,6 +305,192 @@ function planeBasis(plane) {
   if (plane === 'xz') return [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0)];
   if (plane === 'yz') return [new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0)];
   return [new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1)];
+}
+
+/**
+ * How deep a feature sits in the dependency graph.
+ *
+ * Everything at one depth is independent of everything else at that depth, by
+ * construction, so a whole depth can be evaluated at once. That is what makes
+ * the parallel rebuild possible without a scheduler: the document's own
+ * structure already says what may overlap.
+ */
+function depths(doc) {
+  const byId = new Map(doc.features.map(f => [f.id, f]));
+  const memo = new Map();
+  const depthOf = (id, seen = new Set()) => {
+    if (memo.has(id)) return memo.get(id);
+    if (seen.has(id)) return 0;                  // a cycle; migrate() prevents these
+    seen.add(id);
+    const f = byId.get(id);
+    if (!f || !f.inputs?.length) { memo.set(id, 0); return 0; }
+    let d = 0;
+    for (const i of f.inputs) d = Math.max(d, depthOf(i, seen) + 1);
+    memo.set(id, d);
+    return d;
+  };
+  const levels = [];
+  for (const f of doc.features) {
+    const d = depthOf(f.id);
+    (levels[d] ??= []).push(f);
+  }
+  return levels.map(l => l || []);
+}
+
+/**
+ * Evaluate the whole document, off the main thread where it can be.
+ *
+ * Same results as `rebuild`, same cache, same order of effects: the only
+ * difference is that booleans are handed to the worker pool, a whole
+ * dependency level at a time, so several run at once and none of them runs on
+ * the thread that draws the interface. If the pool is unavailable for any
+ * reason, each boolean falls straight through to the identical synchronous
+ * kernel, so the answer never depends on whether workers started.
+ */
+export async function rebuildAsync(doc, { onProgress = null } = {}) {
+  const { scope, errors: paramErrors } = buildScope(doc.params);
+  const results = new Map();
+  const ctx = { scope, doc, results };
+  const consumed = new Set();
+  const keys = new Map();
+  const parallel = { levels: 0, offThread: 0, onThread: 0, peak: 0, yields: 0 };
+
+  for (const f of doc.features) {
+    if (f.suppressed) continue;
+    for (const i of f.inputs) consumed.add(i);
+  }
+
+  const levels = depths(doc);
+  let done = 0;
+  let sinceYield = performance.now();
+  // Hand the thread back when we have held it for longer than a frame. A
+  // boolean now runs in a worker, but tessellating primitives and measuring
+  // mass properties still happen here, and a long document can hold the
+  // thread for hundreds of milliseconds even with no boolean in it. Yielding
+  // turns one long stall into several short ones, which is the difference
+  // between a window that is slow and one that looks broken.
+  const breathe = async () => {
+    if (performance.now() - sinceYield < 12) return false;
+    await new Promise(r => setTimeout(r, 0));
+    sinceYield = performance.now();
+    parallel.yields++;
+    return true;
+  };
+
+  for (const level of levels) {
+    if (!level.length) continue;
+    parallel.levels++;
+    const waits = [];
+
+    for (const f of level) {
+      if (f.suppressed) {
+        results.set(f.id, { instances: [], error: null, suppressed: true, name: f.name });
+        keys.set(f.id, 'suppressed');
+        continue;
+      }
+      const inputKeys = f.inputs.map(id => keys.get(id) || '');
+      const key = keyOf(f, scope, doc, inputKeys);
+      const hit = cache.get(f.id);
+      if (hit && hit.key === key) {
+        results.set(f.id, { ...hit.result, name: f.name });
+        keys.set(f.id, key);
+        continue;
+      }
+
+      // Booleans go off-thread; everything else is a fast primitive builder
+      // and costs more to ship to a worker than to just run.
+      const job = f.type === 'boolean' ? prepareBoolean(f, ctx) : null;
+      if (!job) {
+        let result;
+        try { result = { instances: evalOne(f, ctx), error: null, name: f.name }; }
+        catch (err) { result = { instances: [], error: err.message || String(err), name: f.name }; }
+        cache.set(f.id, { key, result });
+        keys.set(f.id, key);
+        results.set(f.id, result);
+        await breathe();
+        continue;
+      }
+
+      parallel.offThread++;
+      waits.push(
+        pool.run(job.op, job.operands)
+          .then(out => ({ f, key, geom: trianglesToGeometry(out), job }))
+          .catch((err) => {
+            if (!isWorkerUnavailable(err)) return { f, key, error: err.message, job };
+            // The pool could not take it. Run it here rather than failing.
+            parallel.onThread++;
+            try { return { f, key, geom: booleanGeometries(job.op, job.operands3), job }; }
+            catch (e2) { return { f, key, error: e2.message || String(e2), job }; }
+          }),
+      );
+      // Preparing a job is itself real work: flattening a 64-segment sphere
+      // into typed arrays is tens of milliseconds, and four of them back to
+      // back was the largest remaining stall. The job is already dispatched
+      // by this point, so yielding here costs no parallelism.
+      await breathe();
+    }
+
+    if (waits.length) {
+      parallel.peak = Math.max(parallel.peak, waits.length);
+      const settled = await Promise.all(waits);
+      for (const r of settled) {
+        let result;
+        if (r.error) {
+          result = { instances: [], error: r.error, name: r.f.name };
+        } else if (triangleCount(r.geom) === 0) {
+          result = { instances: [], error: 'Boolean produced an empty body — check that the inputs overlap', name: r.f.name };
+        } else {
+          result = { instances: finishBoolean(r.geom, r.job), error: null, name: r.f.name };
+        }
+        cache.set(r.f.id, { key: r.key, result });
+        keys.set(r.f.id, r.key);
+        results.set(r.f.id, result);
+      }
+    }
+
+    done += level.length;
+    onProgress?.(done, doc.features.length);
+    await breathe();
+  }
+
+  const live = new Set(doc.features.map(f => f.id));
+  for (const id of [...cache.keys()]) if (!live.has(id)) cache.delete(id);
+
+  const topLevel = doc.features.filter(f => !consumed.has(f.id) && !f.suppressed);
+  const stats = summarise(topLevel, results);
+  return { results, consumed, scope, paramErrors, stats, topLevel, parallel };
+}
+
+/**
+ * Everything a boolean needs, resolved on this thread, ready to ship.
+ * Returns null when the feature cannot be handed off at all (bad inputs), so
+ * the caller runs the normal path and gets the normal error message.
+ */
+function prepareBoolean(feature, ctx) {
+  try {
+    const params = resolveParams(feature, ctx.scope);
+    const tr = resolveTransform(feature.transform, ctx.scope);
+    const matrix = transformMatrix(tr);
+    const cat = catalogOf('boolean');
+    const inputInstances = [];
+    for (const id of feature.inputs) {
+      const r = ctx.results.get(id);
+      if (!r || r.error) return null;
+      for (const inst of r.instances) inputInstances.push(inst);
+    }
+    if (inputInstances.length < (cat.minInputs || 2)) return null;
+    const operands3 = inputInstances.map(i => ({ geometry: i.geometry, matrix: i.matrix }));
+    return { op: params.op, operands: operandsToArrays(operands3), operands3, matrix };
+  } catch {
+    return null;
+  }
+}
+
+/** Recentre a boolean result and fold its own transform in, as evalOne does. */
+function finishBoolean(geom, job) {
+  const c = recentre(geom);
+  const m = new THREE.Matrix4().makeTranslation(c.x, c.y, c.z).multiply(job.matrix);
+  return [{ geometry: geom, matrix: m }];
 }
 
 /**

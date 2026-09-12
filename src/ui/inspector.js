@@ -415,7 +415,8 @@ function documentSection(app) {
 function viewSection(app) {
   const v = store.doc.view;
   const set = (k, val, rebuild = false) => {
-    store.edit('View setting', (d) => { d.view[k] = val; }, { rebuild });
+    // A view setting is not a model edit, so it never becomes an undo step.
+    store.quiet((d) => { d.view[k] = val; }, { rebuild });
     app.applyView();
   };
   return section('View', [
@@ -432,11 +433,11 @@ function viewSection(app) {
     checkbox('Orthographic camera', v.ortho, (val) => set('ortho', val)),
     el('hr', { style: { border: 0, borderTop: '1px solid var(--line-soft)' } }),
     checkbox('Section view', v.clip.enabled, (val) => {
-      store.edit('Section', (d) => { d.view.clip.enabled = val; }, { rebuild: false });
+      store.quiet((d) => { d.view.clip.enabled = val; });
       app.applyView();
     }),
     field('Section axis', select(v.clip.axis, [['x', 'X'], ['y', 'Y'], ['z', 'Z']], (val) => {
-      store.edit('Section', (d) => { d.view.clip.axis = val; }, { rebuild: false });
+      store.quiet((d) => { d.view.clip.axis = val; });
       app.applyView();
     })),
     (() => {
@@ -450,7 +451,7 @@ function viewSection(app) {
       return field('Section at', r);
     })(),
     checkbox('Flip section', v.clip.flip, (val) => {
-      store.edit('Section', (d) => { d.view.clip.flip = val; }, { rebuild: false });
+      store.quiet((d) => { d.view.clip.flip = val; });
       app.applyView();
     }),
   ], false, { icon: 'camera' });

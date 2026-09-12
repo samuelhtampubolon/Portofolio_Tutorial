@@ -395,13 +395,59 @@ export function migrate(doc) {
 
 const HISTORY_LIMIT = 120;
 
+/**
+ * History is a tree, not two stacks.
+ *
+ * Every package this one imitates gets this wrong in the same way, and it is
+ * the single most bitterly reported thing about all of them: undo a few steps,
+ * make one edit, and everything you undid is gone forever. There is no reason
+ * for that. The states you undid past still exist; a linear redo stack simply
+ * throws them away the moment you do anything else.
+ *
+ * So an edit after an undo adds a *second child* instead of truncating. The
+ * abandoned future stays reachable, named, and one click away in the history
+ * dialog. Nothing you have done in a session is ever unreachable while the
+ * session lasts.
+ *
+ * Each node holds a whole document snapshot rather than a delta, for the same
+ * reason the version store does: a delta chain that cannot be replayed is
+ * worse than no history, and `structuredClone` on plain JSON is fast enough
+ * that the simple thing is also the right thing.
+ *
+ * `visited` is a counter, not a timestamp, so pruning is deterministic and
+ * testable rather than dependent on the clock.
+ */
+let nodeSeq = 0;
+function historyNode(label, doc, parent = null) {
+  nodeSeq++;
+  return {
+    id: `h${nodeSeq}`,
+    label,
+    doc,
+    parent,
+    children: [],
+    // Which child redo should follow: the one you most recently came back
+    // from, so redo retraces the path you just undid rather than a sibling.
+    next: null,
+    visited: nodeSeq,
+  };
+}
+
 class Store {
   constructor() {
     this.doc = newDocument();
-    this.undoStack = [];
-    this.redoStack = [];
+    this.root = historyNode('Blank document', this.doc);
+    this.head = this.root;
+    this._clock = nodeSeq;
     this.dirty = false;
     this._label = null;
+  }
+
+  /** Depth of the current node, which is how many steps back are available. */
+  get depth() {
+    let n = 0, at = this.head;
+    while (at.parent) { at = at.parent; n++; }
+    return n;
   }
 
   /** Snapshot the document before a mutation. Call, mutate, then commit(). */
@@ -418,14 +464,69 @@ class Store {
       // pushes a single entry when it finishes.
       this._pending = null;
     } else if (this._pending) {
-      this.undoStack.push({ label: this._label, doc: this._pending });
-      if (this.undoStack.length > HISTORY_LIMIT) this.undoStack.shift();
-      this.redoStack.length = 0;
+      // `this.doc` and `head.doc` are the same object, so the mutation that
+      // just happened also changed the node's snapshot. Put the pre-edit copy
+      // back into the node and hang the mutated document off it as a new
+      // child. That is what makes this a branch rather than a truncation:
+      // whatever children the node already had are still there.
+      this.head.doc = this._pending;
+      const node = historyNode(this._label || 'Edit', this.doc, this.head);
+      this.head.children.push(node);
+      this.head.next = node;
+      this.head = node;
+      this._clock = nodeSeq;
       this._pending = null;
+      this._prune();
     }
     this.doc.meta.modified = new Date().toISOString();
     this.dirty = true;
     if (!silent) bus.emit(rebuild ? T.DOC_CHANGED : T.DOC_TOUCHED, this.doc);
+  }
+
+  /**
+   * Keep the tree under the node limit.
+   *
+   * Never drop a node on the path from the root to where you are: that path is
+   * your undo chain. Everything else goes oldest-visited first, which sheds
+   * long-abandoned branches before recent ones.
+   */
+  _prune() {
+    const all = [];
+    const walk = (n) => { all.push(n); n.children.forEach(walk); };
+    walk(this.root);
+    if (all.length <= HISTORY_LIMIT) return;
+
+    const spine = new Set();
+    for (let at = this.head; at; at = at.parent) spine.add(at);
+
+    // Only leaves can be removed without orphaning anything, so shed leaves
+    // repeatedly until the tree fits.
+    let count = all.length;
+    while (count > HISTORY_LIMIT) {
+      const leaves = [];
+      const collect = (n) => {
+        if (!n.children.length && n !== this.root && !spine.has(n)) leaves.push(n);
+        n.children.forEach(collect);
+      };
+      collect(this.root);
+      if (!leaves.length) break;              // nothing left but the spine
+      leaves.sort((a, b) => a.visited - b.visited);
+      const drop = leaves[0];
+      drop.parent.children = drop.parent.children.filter(c => c !== drop);
+      if (drop.parent.next === drop) drop.parent.next = drop.parent.children.at(-1) || null;
+      count--;
+    }
+
+    // If even the spine is over the limit, re-root: the oldest states go, and
+    // the new root keeps its own snapshot so it is still a usable document.
+    const spineList = [];
+    for (let at = this.head; at; at = at.parent) spineList.unshift(at);
+    if (spineList.length > HISTORY_LIMIT) {
+      const newRoot = spineList[spineList.length - HISTORY_LIMIT];
+      newRoot.parent = null;
+      newRoot.label = 'Earlier history dropped';
+      this.root = newRoot;
+    }
   }
 
   /** Convenience: begin + mutate + commit in one call. */
@@ -465,35 +566,79 @@ class Store {
     bus.emit(rebuild ? T.DOC_CHANGED : T.DOC_TOUCHED, this.doc);
   }
 
-  undo() {
-    const prev = this.undoStack.pop();
-    if (!prev) return false;
-    this.redoStack.push({ label: prev.label, doc: structuredClone(this.doc) });
-    this.doc = prev.doc;
+  /** Move to a node and make its snapshot the live document. */
+  _goto(node, verb) {
+    const label = node === this.head ? '' : (verb === 'Undo' ? this.head.label : node.label);
+    this.head.visited = ++this._clock;
+    this.head = node;
+    node.visited = ++this._clock;
+    this.doc = node.doc;
     this.dirty = true;
     bus.emit(T.DOC_CHANGED, this.doc);
-    bus.emit(T.STATUS, `Undo: ${prev.label}`);
+    if (label) bus.emit(T.STATUS, `${verb}: ${label}`);
     return true;
+  }
+
+  undo() {
+    if (!this.head.parent) return false;
+    const from = this.head;
+    from.parent.next = from;          // so redo comes back the way we left
+    return this._goto(from.parent, 'Undo');
   }
 
   redo() {
-    const next = this.redoStack.pop();
-    if (!next) return false;
-    this.undoStack.push({ label: next.label, doc: structuredClone(this.doc) });
-    this.doc = next.doc;
-    this.dirty = true;
-    bus.emit(T.DOC_CHANGED, this.doc);
-    bus.emit(T.STATUS, `Redo: ${next.label}`);
-    return true;
+    const node = this.head.next || this.head.children.at(-1);
+    if (!node) return false;
+    return this._goto(node, 'Redo');
   }
 
-  canUndo() { return this.undoStack.length > 0; }
-  canRedo() { return this.redoStack.length > 0; }
+  canUndo() { return !!this.head.parent; }
+  canRedo() { return this.head.children.length > 0; }
+
+  /** Jump to any node by id, including one on an abandoned branch. */
+  gotoNode(id) {
+    let found = null;
+    const walk = (n) => { if (n.id === id) found = n; else n.children.forEach(walk); };
+    walk(this.root);
+    if (!found || found === this.head) return false;
+    // Mark the path so a later redo follows the branch that was chosen.
+    for (let at = found; at.parent; at = at.parent) at.parent.next = at;
+    return this._goto(found, 'Jump to');
+  }
+
+  /**
+   * The history as the UI needs it: the chain of states behind you, where you
+   * are, the future ahead on the path you last took, and every other branch
+   * still reachable. The last of those is the whole point of the tree.
+   */
+  timeline() {
+    const past = [];
+    for (let at = this.head.parent; at; at = at.parent) past.unshift({ id: at.id, label: at.label });
+
+    const future = [];
+    for (let at = this.head.next || this.head.children.at(-1); at; at = at.next || at.children.at(-1)) {
+      future.push({ id: at.id, label: at.label });
+    }
+
+    // Anything reachable that is on neither the past chain nor the followed
+    // future: a state a linear redo stack would have destroyed.
+    const onPath = new Set([this.head.id, ...past.map(p => p.id), ...future.map(f => f.id)]);
+    const abandoned = [];
+    const walk = (n, depth) => {
+      if (!onPath.has(n.id)) abandoned.push({ id: n.id, label: n.label, depth, visited: n.visited });
+      n.children.forEach(c => walk(c, depth + 1));
+    };
+    walk(this.root, 0);
+    abandoned.sort((a, b) => b.visited - a.visited);
+
+    return { past, now: { id: this.head.id, label: this.head.label }, future, abandoned, nodes: nodeSeq };
+  }
 
   load(raw, { markClean = true } = {}) {
     this.doc = migrate(raw);
-    this.undoStack.length = 0;
-    this.redoStack.length = 0;
+    this.root = historyNode('Opened', this.doc);
+    this.head = this.root;
+    this._clock = nodeSeq;
     this.dirty = !markClean;
     bus.emit(T.DOC_LOADED, this.doc);
     bus.emit(T.DOC_CHANGED, this.doc);
