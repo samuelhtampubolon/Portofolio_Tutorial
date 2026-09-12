@@ -259,6 +259,51 @@ export function buildCommands(app) {
     keywords: 'why learn tutor explain principles',
   });
 
+  /* ------------------------------------------------------------- analysis */
+
+  add('studio.section', 'Section properties…', 'section', 'Analyse', () => app.showSection(), {
+    key: 'Ctrl ⇧ A', enabled: () => oneSel() && built(),
+    keywords: 'second moment of area inertia bending stress beam strength modulus',
+  });
+  add('studio.clash', 'Clash check', 'target', 'Analyse', () => app.showClashes(), {
+    enabled: built, keywords: 'interference collision overlap intersect assembly clearance',
+  });
+  add('studio.inspect', 'Inspect imported mesh…', 'probe', 'Analyse', () => app.showInspect(), {
+    enabled: () => built() && store.doc.features.some(f => f.type === 'mesh'),
+    keywords: 'recognise features holes faces measure stl step dumb solid reverse',
+  });
+
+  /* -------------------------------------------------------- configurations */
+
+  add('cfg.manage', 'Configurations…', 'template', 'Configure', () => app.showConfigs(), {
+    keywords: 'variants sizes family table catalogue options',
+  });
+  add('cfg.add', 'New configuration', 'plus', 'Configure', () => app.newConfiguration(), {
+    keywords: 'variant size option',
+  });
+  add('cfg.next', 'Next configuration', 'chevron-right', 'Configure', () => app.cycleConfiguration(1), {
+    enabled: () => (store.doc.configs?.list?.length || 1) > 1,
+  });
+  add('cfg.family', 'Export the family table', 'table', 'Configure', () => app.exportFamily(), {
+    keywords: 'csv catalogue parts list variants',
+  });
+
+  /* ------------------------------------------------------------- versions */
+
+  add('vcs.commit', 'Save a version…', 'history', 'Versions', () => app.commitVersion(), {
+    key: 'Ctrl ⇧ S', keywords: 'snapshot checkpoint milestone revision commit',
+  });
+  add('vcs.browse', 'Version history…', 'sequence', 'Versions', () => app.showVersions(), {
+    keywords: 'revisions diff compare restore branch git timeline',
+  });
+  add('vcs.branch', 'New branch…', 'workspace', 'Versions', () => app.newBranch(), {
+    keywords: 'experiment alternative try variant fork',
+  });
+
+  add('export.quality', 'Export quality…', 'settings', 'Export', () => app.showExportQuality(), {
+    keywords: 'tolerance tessellation triangles chord resolution mesh density',
+  });
+
   return C;
 }
 

@@ -37,6 +37,12 @@ import { MacroRecorder } from './intel/macros.js';
 import * as Studio from './intel/standards.js';
 import { ARCHETYPES, ARCHETYPE_IDS, synthesise, briefNotes, STRENGTH } from './intel/brief.js';
 import { nextLesson, dismissLesson, allLessons, progress as whyProgress, resetSeen as resetWhy } from './intel/why.js';
+import { findClashes, clearance } from './intel/interfere.js';
+import { sectionAt, checkSection, standardPlanes, LOAD_CASES } from './intel/section.js';
+import * as Cfg from './intel/configs.js';
+import * as VCS from './intel/history.js';
+import { recognise, cutterFor } from './intel/recognise.js';
+import { QUALITY, retessellate, cleanMesh, segmentsFor, unitSanity } from './intel/tessellate.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
 import { TimelineUI } from './ui/timelineui.js';
@@ -2240,6 +2246,548 @@ class App {
     });
   }
 
+  /* ============================================== section and clash analysis */
+
+  /** Every visible body with the geometry the analysers need. */
+  analysisBodies() {
+    const out = [];
+    if (!this.build) return out;
+    for (const f of this.build.topLevel) {
+      const r = this.build.results.get(f.id);
+      if (!r || r.error || !r.instances.length) continue;
+      r.instances.forEach((inst, i) => {
+        const mp = massProperties(inst.geometry, inst.matrix);
+        out.push({ feature: f, index: i, geometry: inst.geometry, matrix: inst.matrix, ...mp });
+      });
+    }
+    return out;
+  }
+
+  showSection() {
+    const id = [...this.selection][0];
+    const body = this.analysisBodies().find(b => b.feature.id === id);
+    if (!body) { this.flash('Select a body first.', 'warn'); return; }
+
+    const planes = standardPlanes(body.box);
+    let which = 'yz';
+    let load = { case: 'cantilever', force: 500, span: Math.max(10, Math.round(body.size.length())), safety: 2 };
+
+    const host = el('div');
+    const draw = () => {
+      clear(host);
+      // Named `sec`, not `section`: the panel helper of that name is imported
+      // into this module, and shadowing it here breaks every section below.
+      const sec = sectionAt(body, planes[which].plane);
+      if (!sec) {
+        host.appendChild(el('div', { class: 'banner warn', text: 'That plane does not cut this body.' }));
+        return;
+      }
+      const r = checkSection(sec, { ...load, material: body.feature.material });
+
+      host.append(
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Cut at' }),
+          segmented(which, Object.entries(planes).map(([k, v]) => [k, v.label]), (v) => { which = v; draw(); }),
+        ]),
+        section2D(sec),
+        section('Geometry', [kv([
+          ['Area', `${fmt(sec.area)} mm²`],
+          ['Loops', `${sec.loops}${sec.holes ? ` (${sec.holes} internal)` : ''}`],
+          ['Iₓₓ', `${fmt(sec.ixx, 0)} mm⁴`],
+          ['I_yy', `${fmt(sec.iyy, 0)} mm⁴`],
+          ['I₁ strong axis', `${fmt(sec.i1, 0)} mm⁴`],
+          ['I₂ weak axis', `${fmt(sec.i2, 0)} mm⁴`],
+          ['Principal axis', `${fmt(sec.principalAngleDeg, 2)}°`],
+          ['S₁ section modulus', `${fmt(sec.s1, 0)} mm³`],
+          ['r₁ radius of gyration', `${fmt(sec.r1, 2)} mm`],
+        ])], true, { icon: 'ruler' }),
+        section('Load', [
+          field('Case', select(load.case, Object.entries(LOAD_CASES).map(([k, v]) => [k, v.label]), (v) => { load.case = v; draw(); })),
+          el('div', { class: 'hint', text: LOAD_CASES[load.case].note }),
+          numRow('Force (N)', load.force, (v) => { load.force = v; draw(); }),
+          numRow('Span (mm)', load.span, (v) => { load.span = v; draw(); }),
+          numRow('Safety factor', load.safety, (v) => { load.safety = Math.max(1, v); draw(); }),
+        ], true, { icon: 'physics' }),
+        el('div', { class: `banner ${r.pass ? 'ok' : 'err'}`, text:
+          `${fmt(r.total, 2)} N/mm² against ${fmt(r.allow, 1)} allowable — ${r.verdict}. ` +
+          `${MATERIALS[body.feature.material]?.name || body.feature.material} at ${r.yieldMPa} MPa yield, safety factor ${r.safety}.` }),
+        el('div', { class: 'banner warn', text: 'Exact section properties, and a first-order stress from them. This is the calculation an engineer does on paper before deciding whether a part is worth analysing properly. It knows nothing about stress concentrations, how the load is introduced, fatigue, or anything three-dimensional. It is not finite element analysis.' }),
+      );
+      // append() stringifies null into the document, so a conditional row is
+      // added rather than passed in as one.
+      if (r.bucklingN) {
+        host.appendChild(el('div', { class: 'hint', text: `Euler buckling load for this length: ${fmt(r.bucklingN, 0)} N.` }));
+      }
+    };
+    draw();
+
+    modal({
+      title: 'Section properties', icon: 'section', wide: true,
+      subtitle: `${body.feature.name} · ${MATERIALS[body.feature.material]?.name || body.feature.material}`,
+      body: host,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  showClashes() {
+    const bodies = this.analysisBodies();
+    if (bodies.length < 2) { this.flash('Clash checking needs at least two bodies.', 'warn'); return; }
+    const { clashes, tested, pairs, skipped, unchecked, ms } = findClashes(bodies, { budgetMs: 6000, maxPairs: 400 });
+
+    const body = [
+      el('p', { class: 'hint', text: `${pairs} pairs share a bounding box; ${tested} were intersected exactly in ${Math.round(ms)} ms. This is a measured shared volume, not a bounding-box guess.` }),
+    ];
+
+    if (!clashes.length) {
+      body.push(el('div', { class: 'banner ok', text: 'No two bodies occupy the same space.' }));
+      // Without a clash, the useful number is how close the nearest pair comes.
+      const near = nearestPair(bodies);
+      if (near) {
+        body.push(el('div', { class: 'hint', text: `Closest approach: ${near.a} and ${near.b}, about ${fmt(near.distance, 2)} mm apart. Sampled from the meshes, so the true gap may be slightly smaller.` }));
+      }
+    } else {
+      for (const c of clashes) {
+        body.push(el('div', { class: `dx-item ${c.exact ? (c.fraction > 0.02 ? 'err' : 'warn') : 'info'}` }, [
+          el('div', { class: 'dx-head' }, [
+            el('span', { class: `dx-sev ${c.exact ? 'err' : 'info'}`, text: c.exact ? `${fmt(c.volume)} mm³` : 'not checked' }),
+            el('span', { class: 'dx-title', text: `${c.a.feature.name} ↔ ${c.b.feature.name}` }),
+          ]),
+          el('div', { class: 'dx-detail', text: c.exact
+            ? `Centred at ${fmt(c.at.x)}, ${fmt(c.at.y)}, ${fmt(c.at.z)}${c.fraction ? ` · ${(c.fraction * 100).toFixed(1)}% of the smaller body` : ''}`
+            : 'Too many triangles to intersect within the boolean budget.' }),
+          el('div', { class: 'btn-row' }, [
+            el('button', { class: 'btn sm', text: 'Show me', onclick: () => { this.select([c.a.feature.id, c.b.feature.id]); this.vp.frameSelection(); } }),
+            c.exact ? el('button', {
+              class: 'btn sm primary', text: 'Union them',
+              onclick: () => {
+                store.edit('Union clashing bodies', (d) => {
+                  d.features.push(makeFeature('boolean', { name: 'Union', params: { op: 'union' }, inputs: [c.a.feature.id, c.b.feature.id] }));
+                });
+                closeModal();
+              },
+            }) : null,
+          ].filter(Boolean)),
+        ]));
+      }
+    }
+    if (skipped) body.push(el('div', { class: 'hint', text: `${skipped} pairs were skipped for size. Coarser segment counts would bring them inside the triangle budget.` }));
+    if (unchecked) body.push(el('div', { class: 'banner warn', text: `${unchecked} pairs ran out of time and were not checked. Reduce the model or check those bodies in isolation.` }));
+
+    modal({
+      title: 'Clash check', icon: 'target', wide: true,
+      subtitle: `${bodies.length} bodies · ${clashes.filter(c => c.exact).length} real clashes`,
+      body,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  /* ------------------------------------------------- imported mesh inspection */
+
+  showInspect() {
+    const meshes = store.doc.features.filter(f => f.type === 'mesh' && !f.suppressed);
+    if (!meshes.length) { this.flash('No imported mesh in this document.', 'warn'); return; }
+    const f = meshes.find(m => this.selection.has(m.id)) || meshes[0];
+    const r = this.build.results.get(f.id);
+    if (!r || !r.instances.length) { this.flash(`${f.name} has no geometry.`, 'warn'); return; }
+
+    const inst = r.instances[0];
+    const found = recognise(inst.geometry, inst.matrix);
+
+    const body = [
+      el('p', { class: 'hint', text: 'An imported mesh has no feature tree. This measures what is actually there: the flat faces, and the holes with their axis, position and diameter. Nothing is reconstructed and nothing is guessed.' }),
+    ];
+
+    if (found.truncated) {
+      body.push(el('div', { class: 'banner warn', text: found.reason }));
+    } else {
+      body.push(el('div', { class: 'banner info', text:
+        `${found.triangles.toLocaleString()} triangles · ${found.patches} surface patches · ${found.faces.length} flat faces · ${found.holes.length} holes · ${found.bosses.length} bosses` }));
+
+      if (found.holes.length) {
+        body.push(section(`Holes (${found.holes.length})`, [
+          el('table', { class: 'mass-table' }, [
+            el('thead', {}, [el('tr', {}, ['Ø mm', 'Centre', 'Axis', 'Depth', 'Round', 'Standard', ''].map(h => el('th', { text: h })))]),
+            el('tbody', {}, found.holes.map(h => el('tr', {}, [
+              el('td', { class: 'mono', text: h.diameter.toFixed(3) }),
+              el('td', { class: 'mono', text: `${h.centre.x.toFixed(1)}, ${h.centre.y.toFixed(1)}, ${h.centre.z.toFixed(1)}` }),
+              el('td', { class: 'mono', text: h.axisName || `${h.axis.x.toFixed(2)},${h.axis.y.toFixed(2)},${h.axis.z.toFixed(2)}` }),
+              el('td', { class: 'mono', text: h.length.toFixed(1) }),
+              el('td', { class: 'mono', text: `${(h.roundness * 100).toFixed(1)}%` }),
+              el('td', { text: h.nominal?.label || '–' }),
+              el('td', {}, [el('button', {
+                class: 'btn sm', text: 'Make a cut',
+                onclick: () => { this.addCutterFor(h, f); closeModal(); },
+              })]),
+            ]))),
+          ]),
+          el('div', { class: 'hint', text: 'Roundness is how tightly the surface clusters on its fitted radius. A drilled hole is over 99%; anything lower is a rounded pocket that is nearly circular, and the number is shown so you can tell the difference.' }),
+        ], true, { icon: 'circle' }));
+      }
+
+      if (found.faces.length) {
+        body.push(section(`Flat faces (${found.faces.length})`, [
+          el('table', { class: 'mass-table' }, [
+            el('thead', {}, [el('tr', {}, ['Area mm²', 'Normal', 'Centre', 'Triangles'].map(h => el('th', { text: h })))]),
+            el('tbody', {}, found.faces.slice(0, 20).map(x => el('tr', {}, [
+              el('td', { class: 'mono', text: x.area.toFixed(1) }),
+              el('td', { class: 'mono', text: x.axis || `${x.normal.x.toFixed(2)},${x.normal.y.toFixed(2)},${x.normal.z.toFixed(2)}` }),
+              el('td', { class: 'mono', text: `${x.centre.x.toFixed(1)}, ${x.centre.y.toFixed(1)}, ${x.centre.z.toFixed(1)}` }),
+              el('td', { class: 'mono', text: String(x.triangles) }),
+            ]))),
+          ]),
+          found.faces.length > 20 ? el('div', { class: 'hint', text: `${found.faces.length - 20} smaller faces not listed.` }) : null,
+        ].filter(Boolean), false, { icon: 'plate' }));
+      }
+
+      const size = new THREE.Vector3(); inst.geometry.computeBoundingBox(); inst.geometry.boundingBox.getSize(size);
+      const u = unitSanity(size);
+      if (u.suspect) {
+        body.push(el('div', { class: 'banner warn', text:
+          `Largest dimension is ${fmt(u.largestMm)} mm as read. ${u.suggestion ? `If the file was authored in ${u.suggestion.unit}, it would be ${fmt(u.suggestion.largest)} mm.` : 'That is outside the range real parts occupy.'} Nothing in a mesh file states its units, so this is for you to decide.` }));
+      }
+    }
+
+    modal({
+      title: 'Inspect imported mesh', icon: 'probe', wide: true,
+      subtitle: f.name,
+      body,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  /** Place a parametric cut on a measured hole, and subtract it from the mesh. */
+  addCutterFor(hole, meshFeature) {
+    const spec = cutterFor(hole);
+    store.edit(`Cut ${spec.name}`, (d) => {
+      const cut = makeFeature(spec.type, {
+        name: spec.name, params: spec.params, pos: spec.pos, rot: spec.rot,
+        material: meshFeature.material,
+      });
+      d.features.push(cut);
+      d.features.push(makeFeature('boolean', {
+        name: `${meshFeature.name} cut`, params: { op: 'subtract' },
+        inputs: [meshFeature.id, cut.id], material: meshFeature.material,
+      }));
+    });
+    Studio.logDecision({
+      title: `Parametric cut on a measured hole`,
+      choice: `Ø${hole.diameter.toFixed(2)} at ${hole.centre.x.toFixed(1)}, ${hole.centre.y.toFixed(1)}, ${hole.centre.z.toFixed(1)}`,
+      why: 'The imported mesh stays opaque, but the hole now has a feature that can be moved, resized and driven by a parameter.',
+      doc: store.doc.meta.name,
+    });
+    this.flash(`${spec.name} added as a parametric cut. It can be moved and resized like any feature.`, 'ok', 5200);
+  }
+
+  /* ========================================================= configurations */
+
+  showConfigs() {
+    const render = () => {
+      const table = Cfg.familyTable(store.doc);
+      const body = [
+        el('p', { class: 'hint', text: 'A configuration is a named set of parameter values inside this document. The geometry, the feature tree and the relationships are shared by every variant, so a change to the design reaches all of them. Only the numbers that differ are stored.' }),
+      ];
+
+      body.push(el('table', { class: 'mass-table' }, [
+        el('thead', {}, [el('tr', {}, ['Configuration', ...table.columns, ''].map(h => el('th', { text: h })))]),
+        el('tbody', {}, table.rows.map(r => el('tr', { class: r.active ? 'on' : '' }, [
+          el('td', {}, [
+            el('b', { text: r.name }),
+            r.active ? el('span', { class: 'pill', text: 'active' }) : null,
+          ].filter(Boolean)),
+          ...table.columns.map(k => el('td', { class: 'mono', text: String(r.values[k] ?? '') })),
+          el('td', {}, [el('div', { class: 'btn-row' }, [
+            r.active ? null : el('button', {
+              class: 'btn sm', text: 'Use',
+              onclick: () => { this.activateConfiguration(r.id); closeModal(); this.showConfigs(); },
+            }),
+            el('button', {
+              class: 'btn sm', text: 'Rename',
+              onclick: () => promptDialog('Rename configuration', 'Name', r.name, (v) => {
+                if (!v) return;
+                store.edit('Rename configuration', (d) => Cfg.renameConfig(d, r.id, v), { rebuild: false });
+                closeModal(); this.showConfigs();
+              }),
+            }),
+            r.id === Cfg.DEFAULT_ID ? null : el('button', {
+              class: 'btn sm danger', text: 'Delete',
+              onclick: () => {
+                store.edit('Delete configuration', (d) => Cfg.removeConfig(d, r.id));
+                closeModal(); this.showConfigs();
+              },
+            }),
+          ].filter(Boolean))]),
+        ]))),
+      ]));
+
+      if (!table.columns.length) {
+        body.push(el('div', { class: 'hint', text: 'No variant overrides anything yet. Add a configuration, switch to it, and change a parameter: the change is recorded against that variant and nothing else.' }));
+      }
+
+      modal({
+        title: 'Configurations', icon: 'template', wide: true,
+        subtitle: `${table.rows.length} in ${store.doc.meta.name}`,
+        body,
+        actions: [
+          { label: 'Add a configuration', run: () => this.newConfiguration() },
+          { label: 'Export the family', run: () => this.exportFamily() },
+          { label: 'Close', primary: true },
+        ],
+      });
+    };
+    render();
+  }
+
+  newConfiguration() {
+    promptDialog('New configuration', 'Name', 'Long', (v) => {
+      if (!v) return;
+      let id = null;
+      store.edit('Add configuration', (d) => {
+        Cfg.syncBaseline(d);
+        id = Cfg.addConfig(d, v);
+      }, { rebuild: false });
+      if (id) this.activateConfiguration(id);
+      this.flash(`“${v}” is now active. Change a parameter and it is recorded against this variant only.`, 'ok', 5200);
+    }, { help: 'Variants share one feature tree. Only the parameters you change are stored against them.' });
+  }
+
+  activateConfiguration(id) {
+    store.edit('Switch configuration', (d) => {
+      Cfg.syncBaseline(d);
+      Cfg.activate(d, id);
+    });
+    this.refreshUI();
+  }
+
+  cycleConfiguration(dir = 1) {
+    const list = Cfg.configs(store.doc);
+    if (list.length < 2) return;
+    const i = list.findIndex(c => c.id === store.doc.configs.active);
+    const next = list[(i + dir + list.length) % list.length];
+    this.activateConfiguration(next.id);
+    this.flash(`Configuration: ${next.name}`, 'info', 2200);
+  }
+
+  exportFamily() {
+    IO.download(`${store.doc.meta.name}-family.csv`, Cfg.familyCSV(store.doc), 'text/csv');
+  }
+
+  /* ============================================================== versions */
+
+  commitVersion() {
+    promptDialog('Save a version', 'What changed?', '', (msg) => {
+      const r = VCS.commitVersion(msg || 'Snapshot');
+      if (!r.ok) {
+        this.flash(`Could not save: local storage is full. ${r.pruned} old versions were dropped and it still did not fit.`, 'err', 7000);
+        return;
+      }
+      this.flash(`Version saved on ${VCS.currentBranch()}${r.pruned ? `, ${r.pruned} oldest dropped for space` : ''}.`, 'ok', 4200);
+      this.refreshUI();
+    }, { help: 'A version is a full snapshot kept in this browser. Nothing is uploaded.' });
+  }
+
+  newBranch() {
+    promptDialog('New branch', 'Name', 'experiment', (v) => {
+      if (!v) return;
+      const name = VCS.createBranch(v);
+      this.flash(`On branch “${name}”. Versions you save now stay here; the trunk is untouched.`, 'ok', 5000);
+      this.refreshUI();
+    }, { help: 'A branch is somewhere to try an alternative without risking what already works.' });
+  }
+
+  showVersions() {
+    const render = () => {
+      const list = VCS.versions();
+      const use = VCS.usage();
+      const body = [
+        el('p', { class: 'hint', text: 'Versions and branches, kept in this browser. No account, no server, no check-in. A document is plain JSON at every instant, which is what makes a real diff possible.' }),
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Branch' }),
+          select(VCS.currentBranch(), VCS.branches().map(b => [b.name, `${b.name} (${b.count})`]), (v) => {
+            VCS.switchBranch(v); closeModal(); this.showVersions();
+          }),
+        ]),
+      ];
+
+      if (!list.length) {
+        body.push(emptyState('No versions on this branch', 'Save one from Analyse → Save a version, or press Ctrl ⇧ S.', 'history'));
+      } else {
+        for (let i = 0; i < list.length; i++) {
+          const v = list[i];
+          const older = list[i + 1];
+          const full = VCS.getVersion(v.id);
+          const against = older ? VCS.getVersion(older.id) : null;
+          const d = against ? VCS.diff(against.doc, full.doc) : null;
+
+          body.push(el('div', { class: 'dx-item info' }, [
+            el('div', { class: 'dx-head' }, [
+              el('span', { class: 'dx-title', text: v.message }),
+              el('span', { class: 'pill', text: new Date(v.at).toLocaleString() }),
+            ]),
+            el('div', { class: 'dx-detail', text: `${v.summary.features} features · ${v.summary.params} parameters${v.summary.configs > 1 ? ` · ${v.summary.configs} configurations` : ''}` }),
+            d ? el('div', { class: 'dx-why', text: `Against the version below: ${VCS.diffLine(d)}` }) : null,
+            el('div', { class: 'btn-row' }, [
+              el('button', {
+                class: 'btn sm', text: 'Compare with now',
+                onclick: () => { closeModal(); this.showDiff(full); },
+              }),
+              el('button', {
+                class: 'btn sm primary', text: 'Restore',
+                onclick: () => confirmDialog('Restore this version?',
+                  `The document goes back to "${v.message}". Save a version of where you are first if you want to come back.`,
+                  () => { VCS.restore(v.id); this.flash('Restored.', 'ok'); setTimeout(() => this.vp.frameAll(), 150); },
+                  { yes: 'Restore' }),
+              }),
+              el('button', {
+                class: 'btn sm danger', text: 'Delete',
+                onclick: () => { VCS.deleteVersion(v.id); closeModal(); this.showVersions(); },
+              }),
+            ]),
+          ].filter(Boolean)));
+        }
+      }
+
+      body.push(el('div', { class: 'hint', text: `${use.versions} versions across ${use.branches} branches, using ${(use.bytes / 1e6).toFixed(2)} MB of about ${(use.limit / 1e6).toFixed(1)} MB. Oldest versions are dropped automatically when the space runs out.` }));
+
+      modal({
+        title: 'Version history', icon: 'sequence', wide: true,
+        subtitle: `${VCS.currentBranch()} · ${list.length} versions`,
+        body,
+        actions: [
+          { label: 'Save a version', run: () => setTimeout(() => this.commitVersion(), 60) },
+          { label: 'New branch', run: () => setTimeout(() => this.newBranch(), 60) },
+          { label: 'Close', primary: true },
+        ],
+      });
+    };
+    render();
+  }
+
+  /** The structural difference between a saved version and the live document. */
+  showDiff(version) {
+    const d = VCS.diff(version.doc, store.doc);
+    const body = [
+      el('p', { class: 'hint', text: `Comparing “${version.message}” (${new Date(version.at).toLocaleString()}) with the document as it is now.` }),
+    ];
+
+    if (d.empty) {
+      body.push(el('div', { class: 'banner ok', text: 'Identical. Nothing has changed since that version.' }));
+    } else {
+      if (d.meta.length) {
+        body.push(section('Document', d.meta.map(m =>
+          el('div', { class: 'diff-row' }, [
+            el('span', { class: 'diff-key', text: m.what }),
+            el('span', { class: 'diff-from', text: String(m.from || '—') }),
+            el('span', { class: 'diff-arrow', text: '→' }),
+            el('span', { class: 'diff-to', text: String(m.to || '—') }),
+          ])), true, { icon: 'doc-props' }));
+      }
+      if (d.params.length) {
+        body.push(section(`Parameters (${d.params.length})`, d.params.map(p =>
+          el('div', { class: `diff-row ${p.kind}` }, [
+            el('span', { class: 'diff-key', text: p.name }),
+            el('span', { class: 'diff-from', text: p.kind === 'added' ? '—' : String(p.from) }),
+            el('span', { class: 'diff-arrow', text: p.kind === 'removed' ? '✕' : '→' }),
+            el('span', { class: 'diff-to', text: p.kind === 'removed' ? '—' : String(p.to) }),
+          ])), true, { icon: 'book' }));
+      }
+      if (d.features.length) {
+        body.push(section(`Features (${d.features.length})`, d.features.map(f =>
+          el('div', { class: `diff-feature ${f.kind}` }, [
+            el('div', { class: 'diff-head' }, [
+              el('span', { class: `diff-badge ${f.kind}`, text: f.kind }),
+              el('span', { class: 'diff-name', text: f.name }),
+              el('span', { class: 'diff-type', text: f.type }),
+            ]),
+            ...f.changes.map(c => el('div', { class: 'diff-row changed' }, [
+              el('span', { class: 'diff-key', text: c.what }),
+              el('span', { class: 'diff-from', text: String(c.from ?? '—') }),
+              el('span', { class: 'diff-arrow', text: '→' }),
+              el('span', { class: 'diff-to', text: String(c.to ?? '—') }),
+            ])),
+          ])), true, { icon: 'workspace' }));
+      }
+    }
+
+    modal({
+      title: 'What changed', icon: 'history', wide: true,
+      subtitle: VCS.diffLine(d),
+      body,
+      actions: [
+        { label: 'Back to history', run: () => setTimeout(() => this.showVersions(), 60) },
+        { label: 'Close', primary: true },
+      ],
+    });
+  }
+
+  /* ======================================================== export quality */
+
+  showExportQuality() {
+    const s = Studio.standards();
+    let quality = s.exportQuality || 'standard';
+    const host = el('div');
+
+    const draw = () => {
+      clear(host);
+      const q = QUALITY[quality];
+      const preview = q.tol ? retessellate(store.doc, q.tol) : null;
+
+      host.append(
+        el('div', { class: 'row wide' }, [
+          el('label', { text: 'Quality' }),
+          select(quality, Object.entries(QUALITY).map(([k, v]) => [k, v.label]), (v) => { quality = v; draw(); }),
+        ]),
+        el('div', { class: 'hint', text: q.note }),
+        q.tol
+          ? el('div', { class: 'banner info', text: `Chord tolerance ${q.tol} mm: no point on the exported mesh is further than that from the surface it represents. Segment counts follow from it, per feature, so a 3mm hole and a 200mm flange each get exactly what they need.` })
+          : el('div', { class: 'banner info', text: 'Export uses whatever segment counts the features already carry.' }),
+      );
+
+      if (preview) {
+        const grew = preview.changes.filter(c => c.to > c.from).length;
+        const cut = preview.changes.filter(c => c.to < c.from).length;
+        host.append(
+          el('div', { class: 'big-stat' }, [
+            el('span', { class: 'bs-value', text: String(preview.after) }),
+            el('span', { class: 'bs-unit', text: `segments in total, from ${preview.before}` }),
+          ]),
+          el('div', { class: 'hint', text: `${grew} features refined, ${cut} coarsened, ${store.doc.features.length - preview.changes.length} unchanged.` }),
+        );
+        if (preview.changes.length) {
+          host.appendChild(section('Per feature', [
+            el('table', { class: 'mass-table' }, [
+              el('thead', {}, [el('tr', {}, ['Feature', 'Radius', 'Segments', ''].map(h => el('th', { text: h })))]),
+              el('tbody', {}, preview.changes.slice(0, 24).map(c => el('tr', {}, [
+                el('td', { text: c.name }),
+                el('td', { class: 'mono', text: `${c.radius.toFixed(1)} mm` }),
+                el('td', { class: 'mono', text: `${c.from} → ${c.to}` }),
+                el('td', { text: c.to > c.from ? 'refined' : 'coarsened' }),
+              ]))),
+            ]),
+          ], false, { icon: 'mesh' }));
+        }
+      }
+
+      host.appendChild(el('div', { class: 'hint', text: 'This applies to export only. The document you are editing keeps its own segment counts, so a tolerance chosen for one handoff never becomes the model\'s.' }));
+    };
+    draw();
+
+    modal({
+      title: 'Export quality', icon: 'settings', wide: true,
+      subtitle: 'Spend triangles where the surface actually curves',
+      body: host,
+      actions: [
+        { label: 'Cancel' },
+        {
+          label: 'Use this quality', primary: true,
+          run: () => {
+            Studio.setStandard('exportQuality', quality);
+            this.flash(`Exports now use ${QUALITY[quality].label}.`, 'ok');
+          },
+        },
+      ],
+    });
+  }
+
   showShortcuts() {
     const groups = {};
     for (const c of this.commands) {
@@ -2594,6 +3142,104 @@ function randomColour() {
 /* ------------------------------------------------------------------ go */
 
 const app = new App();
+/* ======================================================= analysis helpers */
+
+/** A numeric row for the section dialog. */
+function numRow(label, value, onChange) {
+  const i = el('input', { type: 'number', step: 'any', value: String(value) });
+  i.addEventListener('input', () => { const n = Number(i.value); if (Number.isFinite(n)) onChange(n); });
+  return el('div', { class: 'row wide' }, [el('label', { text: label }), i]);
+}
+
+/**
+ * Draw a cross-section to scale.
+ *
+ * A table of second moments means very little without the shape they came from,
+ * and the outline is the one part of a section report that can be checked at a
+ * glance: if the picture is not the section you expected, no number below it
+ * matters.
+ */
+function section2D(sec, size = 300) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const loop of sec.outline) {
+    for (const [x, y] of loop) {
+      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    }
+  }
+  const w = Math.max(1e-6, maxX - minX), h = Math.max(1e-6, maxY - minY);
+  const pad = Math.max(w, h) * 0.08;
+  const vb = [minX - pad, minY - pad, w + pad * 2, h + pad * 2];
+  const stroke = Math.max(w, h) / 240;
+
+  const ns = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(ns, 'svg');
+  svg.setAttribute('viewBox', vb.join(' '));
+  svg.setAttribute('class', 'section-svg');
+  svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+  // An inline SVG carrying only a viewBox has no intrinsic height, and in a
+  // flex column that collapses it to nothing. The size is set here rather than
+  // left to the stylesheet so the drawing cannot silently disappear.
+  svg.setAttribute('width', '100%');
+  svg.setAttribute('height', String(size));
+  // SVG's y axis runs down the screen and the section's runs up it.
+  const g = document.createElementNS(ns, 'g');
+  g.setAttribute('transform', `translate(0 ${2 * (minY - pad) + h + pad * 2}) scale(1 -1)`);
+
+  const path = document.createElementNS(ns, 'path');
+  path.setAttribute('d', sec.outline.map(loop =>
+    `M ${loop.map(([x, y]) => `${x.toFixed(4)} ${y.toFixed(4)}`).join(' L ')} Z`).join(' '));
+  path.setAttribute('fill-rule', 'evenodd');
+  path.setAttribute('class', 'section-fill');
+  path.setAttribute('stroke-width', String(stroke));
+  g.appendChild(path);
+
+  // The centroid, because every section modulus below is measured from it.
+  const c = document.createElementNS(ns, 'circle');
+  c.setAttribute('cx', String(sec.centroid2D[0]));
+  c.setAttribute('cy', String(sec.centroid2D[1]));
+  c.setAttribute('r', String(Math.max(w, h) / 90));
+  c.setAttribute('class', 'section-centroid');
+  g.appendChild(c);
+
+  // The principal axes, which are the directions the section is strongest and
+  // weakest about, and are rarely the ones you would have guessed.
+  const len = Math.max(w, h) * 0.55;
+  const t = (sec.principalAngleDeg * Math.PI) / 180;
+  for (const [dx, dy, cls] of [[Math.cos(t), Math.sin(t), 'strong'], [-Math.sin(t), Math.cos(t), 'weak']]) {
+    const line = document.createElementNS(ns, 'line');
+    line.setAttribute('x1', String(sec.centroid2D[0] - dx * len));
+    line.setAttribute('y1', String(sec.centroid2D[1] - dy * len));
+    line.setAttribute('x2', String(sec.centroid2D[0] + dx * len));
+    line.setAttribute('y2', String(sec.centroid2D[1] + dy * len));
+    line.setAttribute('class', `section-axis ${cls}`);
+    line.setAttribute('stroke-width', String(stroke));
+    g.appendChild(line);
+  }
+
+  svg.appendChild(g);
+  return el('div', { class: 'section-view' }, [
+    svg,
+    el('div', { class: 'hint', text: `${fmt(w)} × ${fmt(h)} mm. The dot is the centroid; the solid line is the strong principal axis and the dashed one the weak.` }),
+  ]);
+}
+
+/** The closest two bodies, sampled. Only meaningful when nothing clashes. */
+function nearestPair(bodies) {
+  if (bodies.length < 2) return null;
+  let best = null;
+  for (let i = 0; i < bodies.length && i < 12; i++) {
+    for (let j = i + 1; j < bodies.length && j < 12; j++) {
+      if (bodies[i].feature.id === bodies[j].feature.id) continue;
+      const c = clearance(bodies[i], bodies[j], { samples: 160 });
+      if (c && (!best || c.distance < best.distance)) {
+        best = { distance: c.distance, a: bodies[i].feature.name, b: bodies[j].feature.name };
+      }
+    }
+  }
+  return best;
+}
+
 window.tesserCAD = app;
 try {
   app.boot();

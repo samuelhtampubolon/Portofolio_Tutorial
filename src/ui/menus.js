@@ -143,6 +143,8 @@ export function menuDefs(app, c) {
     ]],
 
     ['Export', () => [
+      c('export.quality'),
+      '-',
       { header: '3D' },
       c('export.stl'), c('export.stlAscii'), c('export.obj'), c('export.glb'), c('export.gltf'), c('export.ply'),
       '-',
@@ -179,6 +181,23 @@ export function menuDefs(app, c) {
       c('macro.record'), c('macro.stop'), c('macro.manage'),
       '-',
       c('studio.standards'), c('studio.lessons'),
+    ]],
+
+    ['Analyse', () => [
+      { header: 'Strength' },
+      c('studio.section'),
+      '-',
+      { header: 'Fit' },
+      c('studio.clash'),
+      '-',
+      { header: 'Imported geometry' },
+      c('studio.inspect'),
+      '-',
+      { header: 'Variants' },
+      c('cfg.manage'), c('cfg.add'), c('cfg.next'), c('cfg.family'),
+      '-',
+      { header: 'Versions' },
+      c('vcs.commit'), c('vcs.browse'), c('vcs.branch'),
     ]],
 
     ['Help', () => [
@@ -240,6 +259,7 @@ export function ribbonDefs(app) {
     { label: 'Measure', items: ['measure.distance', 'measure.angle', 'measure.mass'] },
     { label: 'View', items: ['view.fit', 'view.shadingCycle', 'view.ortho', 'view.section'] },
     { label: 'Studio', items: ['studio.brief', 'studio.doctor', 'studio.cost', 'release.package'] },
+    { label: 'Analyse', items: ['studio.section', 'studio.clash', 'cfg.manage', 'vcs.commit', 'vcs.browse'] },
   ];
 }
 
@@ -307,6 +327,10 @@ export const SHORT_LABEL = {
   'sim.autoSchedule': 'Sequence', 'sim.clearSchedule': 'Clear', 'sim.physics': 'Physics',
   'sim.dropTest': 'Drop test', 'sim.motor': 'Motor', 'sim.bake': 'Bake', 'sim.record': 'Record',
   'studio.brief': 'Brief', 'studio.doctor': 'Doctor', 'studio.cost': 'Cost',
+  'studio.section': 'Section', 'studio.clash': 'Clash', 'studio.inspect': 'Inspect',
+  'cfg.manage': 'Variants', 'cfg.add': 'New variant', 'cfg.next': 'Next', 'cfg.family': 'Family',
+  'vcs.commit': 'Save version', 'vcs.browse': 'History', 'vcs.branch': 'Branch',
+  'export.quality': 'Quality',
   'release.package': 'Release', 'studio.intent': 'Intent', 'studio.standards': 'Standards',
   'macro.record': 'Record', 'macro.stop': 'Stop', 'macro.manage': 'Macros', 'studio.lessons': 'Notes',
 };
@@ -315,7 +339,7 @@ export const SHORT_LABEL = {
 export const MENU_ICON = {
   File: 'file-new', Edit: 'undo', Create: 'box', Modify: 'union', View: 'view-iso',
   Measure: 'ruler', Draft: 'sketch', Simulate: 'timeline', Export: 'file-export',
-  Window: 'panel-left', Studio: 'workspace', Help: 'help',
+  Window: 'panel-left', Studio: 'workspace', Analyse: 'probe', Help: 'help',
 };
 
 export { ICON_FOR };

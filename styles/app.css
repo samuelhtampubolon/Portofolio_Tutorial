@@ -688,6 +688,12 @@ input.scrub::selection { background: var(--accent-soft); }
 .modal-title h2 { margin: 0; font-size: 14.5px; font-weight: 640; color: var(--txt); }
 .modal-sub { margin: 2px 0 0; font-size: 12px; color: var(--txt-2); }
 .modal-body { padding: 15px 16px; overflow: auto; display: flex; flex-direction: column; gap: 11px; }
+/* A scrolling flex column must not shrink its children: the default
+   flex-shrink:1 squashes anything taller than the remaining space, and since
+   the column scrolls there is never a reason to. This bit .sec once and the
+   section drawing a second time, so it is fixed for every child rather than
+   one class at a time. */
+.modal-body > * { flex: none; }
 .modal-foot { padding: 11px 16px; border-top: 1px solid var(--line-soft); display: flex; gap: 7px; justify-content: flex-end; }
 .modal-body h3 { margin: 5px 0 1px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--txt-3); font-weight: 640; }
 .modal-body p { margin: 0; color: var(--txt-2); line-height: 1.65; }
@@ -786,6 +792,46 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
 }
 .why-list { margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 5px; }
 .why-list li { font-size: 11.5px; color: var(--txt-2); line-height: 1.55; }
+
+/* ---- the section drawing ---- */
+.section-view { display: flex; flex-direction: column; gap: 6px; align-items: center; padding: 8px 0; flex: none; }
+.section-svg { width: 100%; height: 300px; display: block; }
+.section-fill { fill: var(--accent-soft); stroke: var(--accent); vector-effect: non-scaling-stroke; }
+.section-centroid { fill: var(--txt); }
+.section-axis { vector-effect: non-scaling-stroke; }
+.section-axis.strong { stroke: var(--ok); }
+.section-axis.weak { stroke: var(--txt-3); stroke-dasharray: 4 3; }
+
+/* ---- the version diff ----
+   A change is three things: what, from, to. Laying them on one grid means the
+   arrows line up down the column, which is most of what makes a diff scannable
+   rather than a wall of text. */
+.diff-row {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 16px minmax(0, 1fr);
+  gap: 8px; align-items: baseline; padding: 3px 0; font-size: 12px;
+  border-bottom: 1px dotted var(--line-soft);
+}
+.diff-key { color: var(--txt-2); overflow: hidden; text-overflow: ellipsis; }
+.diff-from { color: var(--txt-3); font-family: var(--mono); font-size: 11.5px; text-align: right; }
+.diff-arrow { color: var(--txt-3); text-align: center; }
+.diff-to { color: var(--txt); font-family: var(--mono); font-size: 11.5px; font-weight: 560; }
+.diff-row.added .diff-to { color: var(--ok); }
+.diff-row.removed .diff-from { color: var(--err); text-decoration: line-through; }
+
+.diff-feature { padding: 6px 0; border-bottom: 1px solid var(--line-soft); }
+.diff-feature:last-child { border-bottom: 0; }
+.diff-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; margin-bottom: 3px; }
+.diff-name { font-size: 12.5px; font-weight: 600; color: var(--txt); }
+.diff-type { font-size: 11px; color: var(--txt-3); }
+.diff-badge {
+  font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; font-weight: 680;
+  padding: 1px 5px; border-radius: 3px; flex: none;
+  background: var(--bg-4); color: var(--txt-2);
+}
+.diff-badge.added { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.diff-badge.removed { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+.diff-badge.changed { background: var(--accent-soft); color: var(--accent); }
+.diff-feature .diff-row { padding-left: 10px; border-bottom: 0; }
 
 /* The viewport card, once it has stopped being a tour and become the tutor. */
 #learnCard.why { max-width: 330px; }
