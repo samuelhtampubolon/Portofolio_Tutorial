@@ -751,28 +751,301 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
 .toast.warn { border-left-color: var(--warn); } .toast.warn svg { color: var(--warn); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(10px); } }
 
-/* ============================================================ mobile */
+/* ============================================================
+   Phone shell
 
-.edge-tab {
-  position: absolute; top: 50%; transform: translateY(-50%); z-index: 45;
-  display: none; width: 24px; height: 58px; align-items: center; justify-content: center;
-  background: color-mix(in srgb, var(--bg-2) 92%, transparent);
-  border: 1px solid var(--line); color: var(--txt-2); cursor: pointer;
-  backdrop-filter: blur(6px);
+   Layout comes from the media queries below; the `phone` class on <html> is
+   set alongside them for behaviour only (which sheet a control opens), never
+   for anything visual. The desktop chrome is hidden rather than shrunk:
+   navigation moves to a bottom bar in thumb reach, the side panels become
+   bottom sheets hosting the very same DOM, and the view cube is replaced by a
+   floating cluster.
+   ============================================================ */
+
+/* ---- touch sizing: applies to any coarse pointer, phone or tablet ---- */
+@media (pointer: coarse) {
+  .tool { min-height: 48px; min-width: 54px; padding: 7px 8px; }
+  .tool.compact { min-height: 44px; }
+  .mini-btn { min-width: 36px; min-height: 36px; }
+  .icon-btn { width: 40px; height: 40px; }
+  .menu-item { min-height: 44px; padding: 8px 10px; }
+  .tree-node { min-height: 44px; padding: 7px 8px; }
+  .layer-row { min-height: 44px; padding: 6px 7px; }
+  .btn { min-height: 40px; padding: 8px 13px; }
+  .btn.sm { min-height: 36px; }
+  .segmented button { min-height: 36px; }
+  input[type="checkbox"] { width: 20px; height: 20px; }
+  input[type="color"] { width: 40px; height: 40px; }
+  .tl-transport button { width: 40px; height: 38px; }
+  .vc { width: 40px; height: 36px; }
+  .chk { padding: 5px 0; }
+
+  /* 16px is the threshold below which iOS Safari zooms the page on focus */
+  input[type="text"], input[type="number"], input[type="search"], select, textarea {
+    font-size: 16px; height: 40px; padding: 7px 10px;
+  }
+  .axis-field input { height: 40px; }
+  .palette input { font-size: 17px; }
+  .tl-field input, .tl-field select { height: 38px; font-size: 16px; }
+
+  /* hover-only affordances never resolve on touch, so show them always */
+  .tn-eye { opacity: .8; }
 }
-.edge-tab.left { left: 0; border-left: 0; border-radius: 0 var(--r) var(--r) 0; }
-.edge-tab.right { right: 0; border-right: 0; border-radius: var(--r) 0 0 var(--r); }
-.edge-tab:hover { color: var(--accent); border-color: var(--accent); }
-@media (max-width: 900px) { .edge-tab { display: flex; } }
-#workarea.mobile-left .edge-tab.left, #workarea.mobile-right .edge-tab.right { display: none; }
 
+/* ---- phone layout ----
+   Driven by the media query itself rather than a class applied from JS: a
+   MediaQueryList change event is not delivered in every engine, and a
+   missed one would leave desktop chrome on a phone-sized screen. The class
+   is still set for behaviour (which sheet opens), never for layout. */
 @media (max-width: 900px) {
-  #workarea { grid-template-columns: minmax(0,1fr); grid-template-rows: 1fr; position: relative; overflow: hidden; }
-  #leftpanel, #rightpanel { position: absolute; top: 0; bottom: 0; width: min(290px, 86vw); z-index: 40; box-shadow: var(--shadow-3); }
-  #leftpanel { left: 0; transform: translateX(-102%); transition: transform .2s var(--ease); visibility: hidden; }
-  #rightpanel { right: 0; transform: translateX(102%); transition: transform .2s var(--ease); visibility: hidden; }
-  #workarea.mobile-left #leftpanel, #workarea.mobile-right #rightpanel { transform: none; visibility: visible; }
-  #timeline { height: 198px; }
-  .tl-main { grid-template-columns: 128px minmax(0,1fr); }
-  #learnCard { display: none; }
+  /* ---- phone layout ---- */
+  body {
+    grid-template-rows: auto auto 1fr auto auto auto;
+    padding-bottom: 0;
+  }
+
+  #topbar {
+    padding: 0 6px;
+    padding-top: env(safe-area-inset-top, 0px);
+    height: calc(46px + env(safe-area-inset-top, 0px));
+    gap: 2px;
+  }
+  .brand-name,
+  .menubar,
+  .workspaces,
+  .top-spacer,
+  #viewcube,
+  #axisHint,
+  #learnCard { display: none !important; }
+
+  .doc-chip { display: flex; flex: 1; min-width: 0; margin-left: 4px; background: none; border: 0; padding: 0; }
+  .doc-chip > svg { display: none; }
+  #docName { width: 100%; text-align: left; font-size: 16px; color: var(--txt); padding: 6px; height: 42px; }
+
+  #ribbon {
+    min-height: 60px;
+    padding-bottom: 2px;
+    -webkit-overflow-scrolling: touch;
+    scroll-snap-type: x proximity;
+  }
+  .rb-group { padding: 3px 6px; scroll-snap-align: start; }
+  .rb-label { display: none; }
+  .tool .tx { font-size: 11px; }
+
+  #workarea { grid-template-columns: minmax(0, 1fr); position: relative; overflow: hidden; }
+  #leftpanel, #rightpanel { display: none; }
+  #leftpanel.in-sheet, #rightpanel.in-sheet {
+    display: flex; position: static; width: auto; transform: none;
+    visibility: visible; border: 0; box-shadow: none; background: none; height: 100%;
+  }
+  .in-sheet .panel-head { display: none; }
+  .panel-body { padding: 10px 12px 20px; }
+
+  #statusbar {
+    height: auto; min-height: 30px; padding: 4px 12px; gap: 8px;
+    font-size: 12px;
+  }
+  #statusKeys, #statusStats, #statusCoords { display: none; }
+  #statusMsg { max-width: 68vw; }
+
+  /* The ribbon already carries the transport on a phone, so the timeline's own
+     copy of it is pure duplication — and three wrapped rows of controls leave no
+     room for the tracks they belong to. */
+  #timeline { height: 216px; }
+  .tl-main { grid-template-columns: 116px minmax(0, 1fr); }
+  .tl-bar { gap: 6px; padding: 5px 8px; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .tl-bar::-webkit-scrollbar { height: 0; }
+  .tl-transport,
+  .tl-bar > .btn { display: none; }
+  .tl-field, .tl-bar .chk { font-size: 13px; flex: none; }
+  .tl-time { flex: none; }
+
+  /* ---- bottom navigation ---- */
+  #bottombar { display: none; }
+  #bottombar {
+    display: flex; align-items: stretch;
+    background: var(--bg-2);
+    border-top: 1px solid var(--line);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    z-index: 60;
+  }
+  .bb-item {
+    flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 3px; min-height: 54px; padding: 6px 2px;
+    background: none; border: 0; color: var(--txt-3); cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .bb-item:active { background: var(--bg-hover); }
+  .bb-item.on { color: var(--accent); }
+  .bb-icon { position: relative; display: grid; place-items: center; }
+  .bb-label { font-size: 10.5px; font-weight: 560; letter-spacing: .01em; }
+  .bb-badge { position: absolute; top: -1px; right: -4px; width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+
+  /* ---- the floating view cluster ---- */
+  #mobFab { display: none; }
+  #mobFab {
+    display: flex; flex-direction: column; gap: 7px;
+    position: absolute; right: 10px; bottom: 12px; z-index: 8;
+  }
+  .fab-btn {
+    width: 44px; height: 44px; display: grid; place-items: center;
+    background: color-mix(in srgb, var(--bg-2) 90%, transparent);
+    border: 1px solid var(--line); border-radius: 50%;
+    color: var(--txt-2); cursor: pointer; box-shadow: var(--shadow-2);
+    backdrop-filter: blur(10px); -webkit-tap-highlight-color: transparent;
+  }
+  .fab-btn:active { transform: scale(.94); }
+  .fab-btn.on { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .fab-btn:disabled { opacity: .38; }
+
+  /* ---- bottom sheets ---- */
+  #sheetBack {
+    position: fixed; inset: 0; z-index: 260;
+    background: rgba(0, 0, 0, .45);
+    display: flex; align-items: flex-end; justify-content: center;
+    animation: fade .15s var(--ease);
+  }
+  #sheetBack[hidden] { display: none; }
+
+  .sheet {
+    width: 100%; max-width: 680px; height: 52vh;
+    display: flex; flex-direction: column;
+    background: var(--bg-2);
+    border: 1px solid var(--line-strong); border-bottom: 0;
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    box-shadow: var(--shadow-3);
+    transform: translateY(100%);
+    transition: transform .24s var(--ease), height .2s var(--ease);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    overflow: hidden;
+  }
+  .sheet.in { transform: none; }
+  .sheet.tall { height: 82vh; }
+  .sheet.dragging { transition: none; }
+
+  .sheet-handle { padding: 9px 0 5px; display: grid; place-items: center; cursor: grab; touch-action: none; flex: none; }
+  .sheet-handle i { display: block; width: 38px; height: 4px; border-radius: 3px; background: var(--line-strong); }
+  .sheet-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 0 12px 9px; border-bottom: 1px solid var(--line-soft); flex: none; touch-action: none;
+  }
+  .sheet-head h3 { margin: 0; font-size: 14px; font-weight: 640; flex: 1; }
+  .sheet-close {
+    width: 42px; height: 42px; display: grid; place-items: center; flex: none;
+    background: var(--bg-3); border: 1px solid var(--line); border-radius: 50%;
+    color: var(--txt-2); cursor: pointer;
+  }
+  .sheet-body { flex: 1; overflow: auto; min-height: 0; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+
+  .sheet-tabs { display: flex; gap: 3px; flex: 1; background: var(--bg-3); padding: 3px; border-radius: var(--r); }
+  .sheet-tabs button {
+    flex: 1; display: flex; align-items: center; justify-content: center; gap: 6px;
+    min-height: 36px; background: none; border: 0; border-radius: var(--r-sm);
+    color: var(--txt-2); cursor: pointer; font-size: 13px;
+  }
+  .sheet-tabs button.on { background: var(--accent); color: #fff; }
+
+  /* ---- the “More” sheet: every menu, as an accordion ---- */
+  .menu-sheet { padding: 10px 12px 24px; display: flex; flex-direction: column; gap: 8px; }
+
+  .sheet-search {
+    display: flex; align-items: center; gap: 10px; width: 100%;
+    min-height: 46px; padding: 0 13px;
+    background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--r-lg);
+    color: var(--txt-3); cursor: pointer; font-size: 14px;
+  }
+  .sheet-search span { flex: 1; text-align: left; }
+  .sheet-search:active { border-color: var(--accent); }
+
+  .sheet-quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .sq-item {
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+    min-height: 62px; padding: 8px 4px;
+    background: var(--bg-3); border: 1px solid var(--line); border-radius: var(--r);
+    color: var(--txt-2); cursor: pointer; font-size: 11.5px; text-align: center; line-height: 1.25;
+  }
+  .sq-item:active:not(:disabled) { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+  .sq-item.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent); }
+  .sq-item:disabled { opacity: .35; }
+
+  .msec { border: 1px solid var(--line-soft); border-radius: var(--r); overflow: hidden; }
+  .msec > summary {
+    display: flex; align-items: center; gap: 8px; justify-content: space-between;
+    min-height: 46px; padding: 0 13px; background: var(--bg-3);
+    font-weight: 600; cursor: pointer; list-style: none; font-size: 13.5px;
+  }
+  .msec > summary::-webkit-details-marker { display: none; }
+  .msec > summary::after {
+    content: ""; width: 0; height: 0; margin-left: 2px;
+    border-top: 5px solid var(--txt-3); border-left: 4px solid transparent; border-right: 4px solid transparent;
+    transition: transform .15s var(--ease);
+  }
+  .msec[open] > summary::after { transform: rotate(180deg); }
+  .msec-body { padding: 4px; display: flex; flex-direction: column; gap: 1px; }
+  .msec-head { padding: 9px 10px 3px; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--txt-3); font-weight: 640; }
+
+  .m-item {
+    display: flex; align-items: center; gap: 11px; width: 100%;
+    min-height: 46px; padding: 8px 10px; border-radius: var(--r-sm);
+    background: none; border: 0; color: var(--txt); cursor: pointer; text-align: left; font-size: 14px;
+  }
+  .m-item:active:not(:disabled) { background: var(--accent-soft); }
+  .m-item:disabled { opacity: .35; }
+  .m-item.checked { color: var(--accent); }
+  .m-item.danger { color: var(--err); }
+  .m-item .mi-icon { width: 20px; color: var(--txt-3); }
+  .m-item.checked .mi-icon, .m-item.danger .mi-icon { color: inherit; }
+  .m-item .kbd { font: 11px var(--mono); color: var(--txt-3); }
+
+  .msub { border-radius: var(--r-sm); overflow: hidden; }
+  .msub > summary {
+    display: flex; align-items: center; gap: 11px; min-height: 46px; padding: 8px 10px;
+    cursor: pointer; list-style: none; font-size: 14px; color: var(--txt-2);
+  }
+  .msub > summary::-webkit-details-marker { display: none; }
+  .msub > summary::after { content: "›"; margin-left: auto; color: var(--txt-3); font-size: 17px; }
+  .msub[open] > summary::after { content: "⌄"; }
+  .msub-body { padding-left: 18px; border-left: 1px solid var(--line-soft); margin-left: 18px; }
+
+  /* ---- dialogs become sheets on a phone ---- */
+  .modal-back { padding: 0; align-items: flex-end; }
+  .modal {
+    width: 100%; max-width: none; max-height: 92vh;
+    border-radius: var(--r-xl) var(--r-xl) 0 0; border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .modal-head { padding: 14px 16px; }
+  .modal-foot { position: sticky; bottom: 0; background: var(--bg-2); }
+  .modal-foot .btn { flex: 1; }
+  .card-grid { grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); }
+  .kbd-grid { grid-template-columns: 1fr; }
+
+  #paletteRoot { padding-top: 0; align-items: stretch; }
+  .palette { width: 100%; height: 100%; border-radius: 0; display: flex; flex-direction: column; }
+  .palette ul { max-height: none; flex: 1; }
+  .palette li { min-height: 50px; }
+  .palette-foot { padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px)); }
+
+  .quick { grid-template-columns: repeat(3, 92px); }
+  .quick-item { min-height: 74px; }
+
+  #toastRoot { bottom: calc(74px + env(safe-area-inset-bottom, 0px)); }
+  .toast { font-size: 13px; padding: 10px 15px; }
+
+  .dropdown { max-width: calc(100vw - 16px); }
+}
+
+/* ---- landscape phones: the bottom bar would eat too much height ---- */
+@media (max-width: 900px) and (max-height: 480px) and (orientation: landscape) {
+  #bottombar { padding-bottom: 0; }
+  .bb-item { min-height: 42px; }
+  .bb-label { display: none; }
+  #ribbon { min-height: 48px; }
+  .tool { min-height: 40px; }
+  .tool .tx { display: none; }
+}
+
+/* ---- tablets keep the desktop layout but with touch sizing ---- */
+@media (min-width: 901px) and (max-width: 1180px) {
+  #workarea { grid-template-columns: 248px minmax(0, 1fr) 262px; }
 }

@@ -3,6 +3,7 @@
 A walkthrough of the three workspaces, written so you can follow along in the app.
 
 - [0. The interface](#0-the-interface)
+- [0.5 On a phone](#05-on-a-phone)
 - [1. The basics](#1-the-basics)
 - [2. Model — parametric solids](#2-model--parametric-solids)
 - [3. Draft — 2D drawing](#3-draft--2d-drawing)
@@ -78,6 +79,43 @@ rather than a picture:
 | 4D build sequence | A stack of floors pre-sequenced on the timeline — press play |
 
 Open one and change its parameters; that is the quickest way to see what a feature history does.
+
+---
+
+## 0.5 On a phone
+
+Below 900px TesserCAD swaps its whole chrome for a touch layout. Everything the desktop can do
+is still reachable — it just gets there differently.
+
+**Bottom bar.** Model, Draft, Simulate, Panels, More. The first three switch workspace; Panels
+opens the outline and properties; More opens every menu.
+
+**Panels sheet.** A bottom sheet with an Outline / Properties switch. Drag the grey handle to
+resize between half and full height, or flick it downwards to dismiss. It hosts exactly the same
+panels as the desktop sidebars, so nothing is missing or simplified.
+
+**More sheet.** A search row that opens the command palette, six quick actions, then all eleven
+menus as accordions — 192 commands in total, each with its icon and keyboard shortcut.
+
+**Floating cluster**, bottom right of the viewport: zoom-to-fit, a views-and-display sheet
+(standard views, shading, ortho, grid, isolate, section, theme) and undo. In Draft the middle
+button toggles object snap instead.
+
+**Gestures.**
+
+| | 3D (Model / Simulate) | 2D (Draft) |
+|---|---|---|
+| One finger | orbit | draw with the active tool |
+| Two fingers | pan and pinch-zoom | pan and pinch-zoom |
+| Tap | select | place a point |
+| Long-press | context menu | context menu |
+
+In Draft a drawing tool commits when you **lift** your finger, not when you press — so putting a
+second finger down turns the gesture into a pan without leaving a stray point behind.
+
+**What still needs a keyboard.** The modal `G`/`R`/`S` transform operators and the shortcut map.
+On a phone, use the gizmo from **Modify → Gizmo** and the numeric fields in Properties instead;
+both are fully touch-sized.
 
 ---
 

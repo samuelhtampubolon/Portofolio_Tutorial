@@ -187,7 +187,10 @@ export class Viewport {
   resize() {
     const w = this.host.clientWidth, h = this.host.clientHeight;
     if (!w || !h) return;
-    this.renderer.setSize(w, h, false);
+    // updateStyle must stay on: with it off the drawing buffer resizes but the
+    // canvas keeps whatever CSS size it had at construction, so every later
+    // layout change leaves an oversized canvas clipped by its container.
+    this.renderer.setSize(w, h);
     this.persp.aspect = w / h;
     this.persp.updateProjectionMatrix();
     this._syncOrtho();
@@ -644,9 +647,10 @@ export class Viewport {
     return box;
   }
 
-  frameAll(margin = 1.35) { this._frame(this.worldBox(), margin); }
+  frameAll(margin = 1.35) { this.resize(); this._frame(this.worldBox(), margin); }
 
   frameSelection(margin = 1.6) {
+    this.resize();
     const box = new THREE.Box3(); box.makeEmpty();
     for (const id of this.selection) { const g = this.bodies.get(id); if (g) box.expandByObject(g); }
     const size = new THREE.Vector3();
@@ -669,7 +673,12 @@ export class Viewport {
     const c = new THREE.Vector3(), s = new THREE.Vector3();
     box.getCenter(c); box.getSize(s);
     const radius = Math.max(s.length() / 2, 1);
-    const dist = (radius * margin) / Math.tan((this.persp.fov * Math.PI) / 360);
+    /* The camera's field of view is vertical, so on a portrait viewport the
+       horizontal extent is the binding constraint and framing on the vertical
+       one alone pushes the model off both sides. Divide by the aspect ratio
+       whenever it is below 1 to back the camera off far enough. */
+    const aspect = Math.max(0.05, (this.host.clientWidth || 1) / (this.host.clientHeight || 1));
+    const dist = (radius * margin) / Math.tan((this.persp.fov * Math.PI) / 360) / Math.min(1, aspect);
     const dir = new THREE.Vector3().subVectors(this.camera.position, this.controls.target);
     if (dir.lengthSq() < 1e-6) dir.set(1, -1.2, 0.85);
     dir.normalize().multiplyScalar(dist);
