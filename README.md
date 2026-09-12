@@ -4,6 +4,12 @@
 Parametric 3D solid modelling, 2D drafting, and 4D — three dimensions plus time — simulation.
 No installation, no account, no server. Your model never leaves your machine.
 
+![MIT licence](https://img.shields.io/badge/licence-MIT-3da639)
+![No build step](https://img.shields.io/badge/build-none-4c9fff)
+![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
+![167 commands](https://img.shields.io/badge/commands-167-8957e5)
+![58 tests](https://img.shields.io/badge/tests-58%20passing-3da639)
+
 > **▶ Live app:** https://samuelhtampubolon.github.io/Portofolio_Tutorial/
 >
 > Published automatically by the [deploy workflow](../../actions/workflows/pages.yml) on every
@@ -36,6 +42,40 @@ Everything is driven by **named parameters**. Type `plate_w / 2 - clearance` int
 dimension field and the whole model rebuilds when the parameter changes — that is what makes
 it CAD rather than a 3D drawing program.
 
+## The interface
+
+167 commands, reachable five ways — and every one of them is generated from a single registry,
+so nothing can drift out of sync:
+
+| Surface | What it gives you |
+|---|---|
+| **Menu bar** | 11 menus — File, Edit, Create, Modify, View, Measure, Draft, Simulate, Export, Window, Help — with submenus, live checkmarks and shortcut hints |
+| **Ribbon** | A contextual toolbar that changes per workspace, grouped and labelled, with commands greying out when they don't apply |
+| **Command palette** | `Ctrl K` — ranked fuzzy search over everything, with your recent commands first |
+| **Quick menu** | `Q` — eight numbered favourites at the cursor, different per workspace |
+| **Context menus** | Right-click a body or a tree row for exactly the operations that apply to it |
+
+Plus a **preferences dialog**, an **undo-history browser** you can jump around in, six **starter
+templates** that are all real parametric models, and an optional **learning card** that tracks
+the eight things worth trying first.
+
+### Three things it does better than the packages it imitates
+
+**Modal transform operators.** Press `G`, `R` or `S` and the selection follows the pointer.
+Press `X`, `Y` or `Z` to lock an axis; `⇧X` locks the perpendicular plane; type a number for an
+exact value; `⇧` is precision, `Ctrl` snaps; `⏎` confirms and `esc` restores everything. No
+dialog, no gizmo hunt, no mode switch — this is the single fastest editing model of the three
+references, and TesserCAD brings it to a *parametric* modeller where the result lands back in
+the feature tree as an editable dimension.
+
+**Expressions everywhere, not just in a dimension dialog.** Every numeric field — parameters,
+transforms, pattern counts, timeline values — takes `sqrt(area) * 0.5`. There is no separate
+"equation editor" mode to enter and leave.
+
+**Drag-to-scrub numbers.** Any number in the preferences and simulation panels can be dragged
+sideways to change it live, `⇧` for fine and `Ctrl` for coarse, or clicked to type. Tuning a
+value is a gesture, not a type-tab-commit cycle.
+
 <table>
 <tr>
 <td width="50%"><img src="docs/images/draft.png" alt="The Draft workspace: a dimensioned 2D profile on layers"></td>
@@ -60,7 +100,9 @@ it CAD rather than a 3D drawing program.
 - A drag-to-reorder **feature tree**, per-feature suppression, visibility and materials.
 - **Mass properties** — volume, surface area, centre of mass, bounding box and mass for
   15 built-in materials.
-- Move / rotate / scale gizmos, section clipping, measuring tools, four shading modes.
+- Move / rotate / scale gizmos **and** modal `G`/`R`/`S` operators with axis locking and typed values.
+- Align, distribute, drop-to-floor, centre-on-origin, isolate, hide/show, per-body materials.
+- Section clipping, measuring tools, four shading modes, six starter templates.
 
 **Drafting**
 - Line, polyline, rectangle, circle, arc (3-point), ellipse, polygon, spline, point and text.
@@ -93,7 +135,8 @@ it CAD rather than a 3D drawing program.
 - Export **STL** (binary or ASCII), **OBJ**, **glTF/GLB**, **PLY**, **DXF**, **SVG**,
   **PNG** and a **bill-of-materials CSV**.
 - Import **STL**, **OBJ**, **DXF** and `.tcad` — drag and drop onto the viewport.
-- Autosave to local storage, with a full undo/redo history.
+- Autosave to local storage, with a 120-step undo history you can browse and jump around in.
+- Preferences for theme, gizmo size, snap increment, edge angle and autosave interval.
 
 ## Getting started
 
@@ -107,7 +150,8 @@ demo bracket. Then:
 3. **Simulate** — press **Sequence**, then space. The model builds itself along the timeline.
    Press **Drop test** to watch the same bodies fall under gravity instead.
 
-Press `F1` for the full keyboard map, or `Ctrl`+`K` for the command palette.
+Press `F1` for the full keyboard map, `Ctrl`+`K` for the command palette, or `Q` for the
+quick menu.
 
 There is a longer walkthrough in **[docs/USER-GUIDE.md](docs/USER-GUIDE.md)**.
 
@@ -131,8 +175,8 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs 51 headless assertions over the expression evaluator, the CSG kernel, the geometry
-builders, the rebuild engine and the DXF codec. It shims `node_modules/three` from the
+This runs 58 headless assertions over the expression evaluator, the CSG kernel, the geometry
+builders, the rebuild engine, the DXF codec, the starter templates and the command registry. It shims `node_modules/three` from the
 vendored copy first; nothing is downloaded.
 
 ## Deploying your own copy
@@ -172,8 +216,16 @@ src/
     sim.js            the 4D engine: schedule, keyframes, dynamics, motors
     recorder.js       canvas → WebM video capture
   io/io.js            import, export, project save/load
-  ui/                 shell widgets, feature tree, inspector, timeline
-  main.js             the application controller and command registry
+  ui/
+    icons.js          145 inline SVG icons, one visual language, no icon font
+    shell.js          menus, palette, quick menu, modals, toasts, form controls
+    commands.js       the command registry and the starter templates
+    menus.js          menu-bar and ribbon layouts, generated per workspace
+    operators.js      modal G/R/S transforms with axis locking and typed input
+    tree.js           feature tree and layer list
+    inspector.js      the context-sensitive properties panel
+    timelineui.js     transport, tracks, keyframes and the 4D Gantt view
+  main.js             the application controller: chrome, keyboard map, dialogs
 tools/                dev shim + the headless test suite
 ```
 
@@ -191,6 +243,11 @@ Some decisions worth knowing about:
   the simulation is reproducible frame for frame.
 - **No `eval`.** Parametric expressions go through a hand-written tokeniser and
   recursive-descent parser that can only ever produce a number.
+- **One command registry drives every surface.** The menus, ribbon, palette, quick menu,
+  context menus and keyboard map are all generated from the same list, with live `checked`
+  and `enabled` predicates — so a command cannot exist in one place and not another.
+- **145 inline SVG icons**, no icon font and no sprite sheet: each is a path string drawn in
+  `currentColor`, so icons inherit theme and state for free.
 
 ## Honest limitations
 

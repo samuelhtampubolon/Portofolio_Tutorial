@@ -331,6 +331,37 @@ check('SVG export contains the drawing', (() => {
   return svg.startsWith('<?xml') && svg.includes('<circle') && svg.includes('<path');
 })());
 
+/* ---------------------------------------------------------- templates */
+
+const cmds = await import('../src/ui/commands.js');
+cmds.registerFeatureFactory(makeFeature);
+
+for (const t of cmds.TEMPLATES) {
+  invalidateCache();
+  let ok = false, detail = '';
+  try {
+    const started = Date.now();
+    const r = rebuild(t.build());
+    const bad = [...r.results.values()].filter(x => x.error);
+    const ms = Date.now() - started;
+    ok = bad.length === 0 && (t.id === 'blank' || r.stats.bodies > 0) && ms < 6000;
+    detail = bad.length ? bad[0].error : `${r.stats.bodies} bodies, ${r.stats.tris} triangles, ${ms} ms`;
+  } catch (e) { detail = e.message; }
+  check(`template builds: ${t.id}`, ok, detail);
+}
+
+check('every command has a label, icon and group', (() => {
+  // buildCommands needs an app object; a stub is enough to enumerate them
+  const stub = {
+    selection: new Set(), workspace: 'model', draft: { selection: new Set(), tool: 'select', snap: { on: true, grid: true }, ortho: false, polar: false },
+    sim: { playing: false }, vp: { measureMode: null }, gizmoMode: null, prefs: {},
+  };
+  const list = cmds.buildCommands(stub);
+  const bad = list.filter(c => !c.id || !c.label || !c.icon || !c.group || typeof c.run !== 'function');
+  const dupes = list.length - new Set(list.map(c => c.id)).size;
+  return bad.length === 0 && dupes === 0 && list.length > 150;
+})());
+
 /* ------------------------------------------------------------ report */
 
 console.log(results.join('\n'));
