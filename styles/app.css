@@ -494,7 +494,11 @@ svg { flex: none; }
 
 /* ============================================================ inspector */
 
-.sec { margin-bottom: 8px; border: 1px solid var(--line-soft); border-radius: var(--r); overflow: hidden; background: var(--bg-2); }
+/* flex: none matters. A .sec inside .modal-body, which is a flex column, is a
+   flex item: once the dialog overflows, the item is shrunk below its content
+   height and `overflow: hidden` — which is only here to keep the rounded
+   corners — silently clips the bottom of the section. */
+.sec { margin-bottom: 8px; border: 1px solid var(--line-soft); border-radius: var(--r); overflow: hidden; background: var(--bg-2); flex: none; }
 .sec > summary {
   padding: 6px 9px; background: var(--bg-3); cursor: pointer; list-style: none;
   font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase; color: var(--txt-2);
@@ -704,6 +708,90 @@ kbd { font: 11px var(--mono); background: var(--bg-inset); border: 1px solid var
 .card svg { color: var(--accent); }
 .card b { font-size: 12.5px; font-weight: 620; }
 .card span { font-size: 11.5px; color: var(--txt-2); line-height: 1.5; }
+.card.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* ============================================================
+   Studio: the Design Doctor, the cost estimate and the why-tutor
+   ============================================================ */
+
+/* One finding. The severity is carried by a left border rather than a fill,
+   so a panel with a dozen of them still reads as a list and not as an alarm. */
+.dx-item {
+  border: 1px solid var(--line); border-left-width: 3px;
+  border-radius: var(--r-sm); padding: 7px 9px; margin-bottom: 6px;
+  background: var(--bg-3); display: flex; flex-direction: column; gap: 4px;
+}
+.dx-item.err { border-left-color: var(--err); }
+.dx-item.warn { border-left-color: var(--warn); }
+.dx-item.info { border-left-color: var(--accent); }
+.dx-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.dx-sev {
+  font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase; font-weight: 680;
+  padding: 1px 5px; border-radius: 3px; flex: none;
+}
+.dx-sev.err { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
+.dx-sev.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
+.dx-sev.info { background: var(--accent-soft); color: var(--accent); }
+.dx-title { font-size: 12.5px; font-weight: 600; color: var(--txt); min-width: 0; }
+.dx-detail { font-size: 11.5px; color: var(--txt-2); line-height: 1.5; }
+/* The explanation is the point of the finding, so it is set apart rather than
+   tucked away: this is the sentence that teaches, not the one that reports. */
+.dx-why {
+  font-size: 11.5px; color: var(--txt-2); line-height: 1.55;
+  border-left: 2px solid var(--line); padding-left: 8px; font-style: italic;
+}
+.dx-item .btn-row { margin-top: 2px; }
+
+/* The status-bar badge. It is a button, so on a touch screen it has to clear
+   the 40px minimum like every other control: the status bar grows to suit
+   rather than the badge staying a 21px target nobody can hit. */
+.sb-btn { background: none; border: 0; cursor: pointer; font: inherit; display: flex; align-items: center; gap: 5px; border-radius: var(--r-sm); padding: 2px 6px; }
+@media (pointer: coarse) { .sb-btn { min-height: 40px; padding: 2px 10px; } }
+.sb-btn:hover { background: var(--bg-hover); }
+.sb-item.dx-err { color: var(--err); }
+.sb-item.dx-warn { color: var(--warn); }
+.sb-item.dx-info { color: var(--txt-2); }
+.sb-item.dx-ok { color: var(--ok); }
+.sb-item.rec { color: var(--err); display: flex; align-items: center; gap: 5px; }
+.sb-item.rec svg { animation: recPulse 1.4s ease-in-out infinite; }
+@keyframes recPulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .sb-item.rec svg { animation: none; } }
+
+/* Comparison tables in the cost report. */
+.mass-table { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-top: 6px; }
+.mass-table th {
+  text-align: left; font-size: 9.5px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--txt-3); font-weight: 640; padding: 4px 6px; border-bottom: 1px solid var(--line);
+}
+.mass-table td { padding: 4px 6px; border-bottom: 1px solid var(--line-soft); color: var(--txt-2); }
+.mass-table tr.on td { color: var(--txt); background: var(--accent-soft); font-weight: 560; }
+.mass-table td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; }
+
+/* The headline number in the cost dialog. */
+.big-stat { display: flex; align-items: baseline; gap: 9px; padding: 10px 0 4px; }
+.bs-value { font-size: 30px; font-weight: 300; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--txt); }
+.bs-unit { font-size: 12px; color: var(--txt-3); }
+
+/* The design brief.
+   Requirements on the left, the sizing they produce on the right, so the
+   calculation updates in view as you type rather than below the fold. */
+.brief-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; align-items: start; margin-top: 10px; }
+.brief-fields { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+@media (max-width: 820px) { .brief-grid { grid-template-columns: minmax(0, 1fr); } }
+
+.brief-preview {
+  padding: 10px; border-radius: var(--r);
+  background: var(--bg-3); border: 1px solid var(--line-soft);
+  display: flex; flex-direction: column; gap: 7px;
+}
+.why-list { margin: 0; padding-left: 17px; display: flex; flex-direction: column; gap: 5px; }
+.why-list li { font-size: 11.5px; color: var(--txt-2); line-height: 1.55; }
+
+/* The viewport card, once it has stopped being a tour and become the tutor. */
+#learnCard.why { max-width: 330px; }
+#learnCard .why-title { font-size: 12.5px; font-weight: 620; color: var(--txt); margin-bottom: 5px; }
+#learnCard .why-body { font-size: 11.5px; color: var(--txt-2); line-height: 1.6; }
+#learnCard.why .btn-row { margin-top: 8px; }
 
 .hist-list { display: flex; flex-direction: column; gap: 1px; max-height: 46vh; overflow: auto; }
 .hist-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: var(--r-sm); cursor: pointer; border: 1px solid transparent; }

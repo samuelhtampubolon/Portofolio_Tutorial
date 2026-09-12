@@ -165,6 +165,22 @@ export function menuDefs(app, c) {
       c('ws.model'), c('ws.draft'), c('ws.sim'),
     ]],
 
+    ['Studio', () => [
+      { header: 'Start from a requirement' },
+      c('studio.brief'),
+      '-',
+      { header: 'Check and cost' },
+      c('studio.doctor'), c('studio.cost'),
+      '-',
+      { header: 'Ship' },
+      c('release.package'), c('studio.intent'),
+      '-',
+      { header: 'Automate' },
+      c('macro.record'), c('macro.stop'), c('macro.manage'),
+      '-',
+      c('studio.standards'), c('studio.lessons'),
+    ]],
+
     ['Help', () => [
       c('help.palette'), c('help.quickstart'), c('help.shortcuts'), c('help.expressions'),
       '-',
@@ -197,6 +213,7 @@ export function ribbonDefs(app) {
       { label: 'View', items: ['draft.zoomExtents', 'view.grid', 'view.theme'] },
       { label: 'Layers', items: [{ custom: 'layerPicker' }] },
       { label: 'Output', items: ['export.dxf', 'export.svg'] },
+      { label: 'Studio', items: ['studio.doctor', 'release.package'] },
     ];
   }
 
@@ -209,6 +226,7 @@ export function ribbonDefs(app) {
       { label: 'Speed', items: [{ custom: 'speedPicker' }] },
       { label: 'Output', items: ['sim.record', 'export.png'] },
       { label: 'View', items: ['view.fit', 'view.shadingCycle', 'view.ortho'] },
+      { label: 'Studio', items: ['studio.doctor', 'release.package'] },
     ];
   }
 
@@ -221,6 +239,7 @@ export function ribbonDefs(app) {
     { label: 'Organise', items: ['mod.hide', 'mod.isolate', 'mod.showAll', 'mod.material'] },
     { label: 'Measure', items: ['measure.distance', 'measure.angle', 'measure.mass'] },
     { label: 'View', items: ['view.fit', 'view.shadingCycle', 'view.ortho', 'view.section'] },
+    { label: 'Studio', items: ['studio.brief', 'studio.doctor', 'studio.cost', 'release.package'] },
   ];
 }
 
@@ -287,13 +306,16 @@ export const SHORT_LABEL = {
   'sim.key': 'Key pose', 'sim.clearKeys': 'Clear', 'sim.schedule': 'Sequencing',
   'sim.autoSchedule': 'Sequence', 'sim.clearSchedule': 'Clear', 'sim.physics': 'Physics',
   'sim.dropTest': 'Drop test', 'sim.motor': 'Motor', 'sim.bake': 'Bake', 'sim.record': 'Record',
+  'studio.brief': 'Brief', 'studio.doctor': 'Doctor', 'studio.cost': 'Cost',
+  'release.package': 'Release', 'studio.intent': 'Intent', 'studio.standards': 'Standards',
+  'macro.record': 'Record', 'macro.stop': 'Stop', 'macro.manage': 'Macros', 'studio.lessons': 'Notes',
 };
 
 /** Menu-bar labels to icons, for the compact single-button menu on a tablet. */
 export const MENU_ICON = {
   File: 'file-new', Edit: 'undo', Create: 'box', Modify: 'union', View: 'view-iso',
   Measure: 'ruler', Draft: 'sketch', Simulate: 'timeline', Export: 'file-export',
-  Window: 'workspace', Help: 'help',
+  Window: 'panel-left', Studio: 'workspace', Help: 'help',
 };
 
 export { ICON_FOR };

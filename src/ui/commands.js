@@ -222,6 +222,43 @@ export function buildCommands(app) {
   add('help.issue', 'Report a problem', 'warning', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/Portofolio_Tutorial/issues/new'));
   add('help.about', 'About TesserCAD', 'info', 'Help', () => app.showAbout());
 
+  /* ---------------------------------------------------------------- studio
+     The design-intelligence commands. They sit in their own group so the
+     menu, the palette and the shortcut sheet all pick them up automatically:
+     adding a command here is the only registration step there is. */
+  const built = () => !!app.build;
+
+  add('studio.brief', 'New from a design brief…', 'bulb', 'Studio', () => app.showBrief(), {
+    keywords: 'requirements load generate size calculate bracket shaft plate intent',
+  });
+  add('studio.doctor', 'Design doctor', 'probe', 'Studio', () => app.showDoctorReport(), {
+    key: 'F8', enabled: built, keywords: 'check validate dfm manufacturability review problems',
+  });
+  add('studio.cost', 'Cost estimate', 'gauge', 'Studio', () => app.showCostReport(), {
+    enabled: built, keywords: 'price money process compare cnc print mould economics',
+  });
+  add('release.package', 'Release design…', 'download', 'Studio', () => app.showRelease(), {
+    key: 'Ctrl ⇧ R', enabled: built, keywords: 'package deliverables zip ship handoff bom drawing',
+  });
+  add('studio.intent', 'Export design intent', 'file-export', 'Studio', () => app.exportDesignIntent(), {
+    enabled: built, keywords: 'json parameters handoff interoperability semantic',
+  });
+  add('macro.record', 'Record a macro', 'record', 'Studio', () => app.startMacro(), {
+    enabled: () => !app.macro.isRecording, keywords: 'automate repeat workflow script',
+  });
+  add('macro.stop', 'Stop recording', 'stop', 'Studio', () => app.stopMacro(), {
+    enabled: () => app.macro.isRecording,
+  });
+  add('macro.manage', 'Macros…', 'sequence', 'Studio', () => app.showMacros(), {
+    keywords: 'automation replay recorded workflow',
+  });
+  add('studio.standards', 'Studio standards…', 'workspace', 'Studio', () => app.showStudio(), {
+    keywords: 'defaults house organisation memory rates decisions log preferences',
+  });
+  add('studio.lessons', 'Engineering notes', 'book', 'Studio', () => app.showLessons(), {
+    keywords: 'why learn tutor explain principles',
+  });
+
   return C;
 }
 

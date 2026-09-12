@@ -9,6 +9,9 @@ import { tryEval } from '../core/expr.js';
 import { massProperties } from '../core/rebuild.js';
 import { ANIM_PROPS, EASINGS, SCHEDULE_MODES, MOTOR_TYPES } from '../sim/sim.js';
 import { fmt } from '../draft/draft.js';
+import { severityLabel } from '../intel/doctor.js';
+import { PROCESSES } from '../intel/process.js';
+import { standards, setStandard } from '../intel/standards.js';
 
 export function renderRightPanel(app) {
   const host = clear(document.getElementById('rightBody'));
@@ -205,10 +208,75 @@ function renderModel(app, host) {
     ), 'target'));
   }
 
+  if (app.report) host.appendChild(doctorSection(app));
   host.appendChild(paramsSection(app, scope));
   host.appendChild(documentSection(app));
   host.appendChild(viewSection(app));
   if (app.build) host.appendChild(statsSection(app));
+}
+
+/**
+ * The Design Doctor's findings, in the panel rather than behind a menu.
+ *
+ * Validation that lives in a dialog is validation you run once, at the end,
+ * when the cost of what it finds is highest. Keeping it beside the properties
+ * means it is answering continuously, which is the entire point.
+ */
+function doctorSection(app) {
+  const r = app.report;
+  const rows = [];
+  const proc = store.doc.studio?.process || standards().process;
+
+  rows.push(field('Making it by', select(proc, Object.entries(PROCESSES).map(([k, v]) => [k, v.label]), (v) => {
+    store.quiet((d) => { d.studio = { ...(d.studio || {}), process: v }; });
+    setStandard('process', v);
+    app.runDoctor();
+    app.refreshUI();
+  })));
+  rows.push(el('div', { class: 'hint', text: PROCESSES[proc]?.note || '' }));
+
+  if (!r.issues.length) {
+    rows.push(el('div', { class: 'banner ok', text: `All ${r.checked} checks pass for ${PROCESSES[proc]?.label}.` }));
+  } else {
+    for (const issue of r.issues.slice(0, 12)) {
+      const sev = issue.severity === 3 ? 'err' : issue.severity === 2 ? 'warn' : 'info';
+      const body = [
+        el('div', { class: 'dx-head' }, [
+          el('span', { class: `dx-sev ${sev}`, text: severityLabel(issue.severity) }),
+          el('span', { class: 'dx-title', text: issue.title }),
+        ]),
+        issue.detail ? el('div', { class: 'dx-detail', text: issue.detail }) : null,
+        issue.why ? el('div', { class: 'dx-why', text: issue.why }) : null,
+      ].filter(Boolean);
+
+      const acts = el('div', { class: 'btn-row' });
+      if (issue.featureId) {
+        acts.appendChild(el('button', {
+          class: 'btn sm', text: 'Show me',
+          onclick: () => { app.select([issue.featureId]); app.vp.frameSelection(); },
+        }));
+      }
+      if (issue.fix) {
+        acts.appendChild(el('button', {
+          class: 'btn sm primary', text: issue.fix.label,
+          onclick: () => app.applyFix(issue),
+        }));
+      }
+      if (acts.children.length) body.push(acts);
+      rows.push(el('div', { class: `dx-item ${sev}` }, body));
+    }
+    if (r.issues.length > 12) {
+      rows.push(el('div', { class: 'hint', text: `${r.issues.length - 12} more findings. Open the full report for all of them.` }));
+    }
+  }
+
+  rows.push(el('div', { class: 'btn-row' }, [
+    el('button', { class: 'btn sm', onclick: () => app.showCostReport() }, [icon('gauge', { size: 13 }), 'Cost']),
+    el('button', { class: 'btn sm', onclick: () => app.run('release.package') }, [icon('download', { size: 13 }), 'Release…']),
+  ]));
+
+  const badge = r.counts.block ? `${r.counts.block} blocking` : r.issues.length ? String(r.issues.length) : 'OK';
+  return section('Design doctor', rows, r.counts.block > 0 || r.counts.warn > 0, { icon: 'probe', badge });
 }
 
 function paramField(app, f, fld, scope) {

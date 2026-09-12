@@ -29,6 +29,14 @@ import { buildCommands, TEMPLATES, registerFeatureFactory, ICON_FOR } from './ui
 import { menuDefs, ribbonDefs, quickDefaults, viewportContextMenu, SHORT_LABEL, MENU_ICON } from './ui/menus.js';
 import { OperatorHost } from './ui/operators.js';
 import { MobileShell, isPhone, isTablet, attachLongPress } from './ui/mobile.js';
+import { diagnose, severityLabel } from './intel/doctor.js';
+import { PROCESSES, processOf } from './intel/process.js';
+import { partsFrom, costDocument, compare, crossovers, levers, QUANTITIES } from './intel/cost.js';
+import { releasePackage, exportIntent } from './intel/release.js';
+import { MacroRecorder } from './intel/macros.js';
+import * as Studio from './intel/standards.js';
+import { ARCHETYPES, ARCHETYPE_IDS, synthesise, briefNotes, STRENGTH } from './intel/brief.js';
+import { nextLesson, dismissLesson, allLessons, progress as whyProgress, resetSeen as resetWhy } from './intel/why.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
 import { TimelineUI } from './ui/timelineui.js';
@@ -97,6 +105,8 @@ class App {
     this.draft.onTextRequest = (place) => promptDialog('Add text', 'Text', '', (v) => { place(v); this.refreshUI(); },
       { placeholder: 'PLATE A', help: 'Height comes from “Text / dim size” in the right panel.' });
 
+    this.macro = new MacroRecorder(this);
+    this.macro.onChange = () => this.updateStatus();
     this.commands = buildCommands(this);
     this.commandMap = new Map(this.commands.map(c => [c.id, c]));
     this.mobile = new MobileShell(this);
@@ -178,7 +188,9 @@ class App {
   newDocument() {
     this.guardUnsaved('Start a new document?', () => {
       clearLocal();
-      store.load(newDocument('Untitled'));
+      // Seeded, not silently rewritten: this only ever applies to a document
+      // this session is creating, never to one that arrived from someone else.
+      store.load(Studio.seedDocument(newDocument('Untitled')));
       this.selection.clear();
       this.vp.frameAll();
     });
@@ -306,8 +318,52 @@ class App {
     if (this.workspace === 'sim') this.sim.seek(this.sim.time); else this.sim.reset();
     this.applyView();
     this.applyIsolation();
+    this.runDoctor();
     this.refreshUI();
     this.timeline.render();
+  }
+
+  /* ====================================================== design intelligence */
+
+  /**
+   * Re-run the checks against the current build.
+   *
+   * Deliberately synchronous and inside the rebuild: the findings have to be
+   * true of the geometry on screen, and a check that lags a frame behind the
+   * model is worse than no check because it is occasionally wrong.
+   */
+  runDoctor() {
+    if (!this.build) { this.report = null; return; }
+    if (!Studio.standards().autoDoctor) { this.report = null; return; }
+    const process = store.doc.studio?.process || Studio.standards().process;
+    try { this.report = diagnose(store.doc, this.build, { process }); }
+    catch (err) { console.error(err); this.report = null; }
+  }
+
+  /** Apply one of the Doctor's repairs, saying plainly what changed. */
+  applyFix(issue) {
+    if (!issue.fix) return;
+    try {
+      issue.fix.apply(store, makeFeature);
+      Studio.logDecision({
+        title: issue.title,
+        choice: issue.fix.label,
+        why: issue.why,
+        doc: store.doc.meta.name,
+      });
+      this.flash(`${issue.fix.label}. Ctrl Z puts it back.`, 'ok', 4200);
+    } catch (err) {
+      this.flash(`Could not apply that repair: ${err.message}`, 'err', 6000);
+    }
+  }
+
+  /** Everything the cost model needs, computed from the current build. */
+  costInputs() {
+    const s = Studio.standards();
+    const rates = { ...s.rates, materialPrice: s.materialPrice };
+    const batch = store.doc.studio?.batch || s.batch;
+    const parts = this.build ? partsFrom(store.doc, this.build, massProperties) : [];
+    return { parts, batch, rates, standards: s };
   }
 
   refreshBodies(hard = false) {
@@ -1382,7 +1438,46 @@ class App {
     } else if (s) {
       $('#statusStats').textContent = `${s.bodies} bodies · ${s.tris.toLocaleString()} tris · ${fmt(s.mass, 3)} kg · ${Math.round(this.buildMs || 0)} ms`;
     }
+    this.updateDoctorBadge();
     if (!this.ops.running) this.setStatusKeys(this.defaultKeyHints());
+  }
+
+  /**
+   * The Doctor's headline in the status bar.
+   *
+   * A count that is always on screen is the difference between checking being
+   * something you do and something that is simply true of the model. Clicking
+   * it opens the full report; the colour is the worst finding, not an average.
+   */
+  updateDoctorBadge() {
+    const btn = $('#statusDoctor');
+    if (btn) {
+      const r = this.report;
+      if (!r || this.workspace === 'draft') {
+        btn.hidden = true;
+      } else {
+        btn.hidden = false;
+        btn.className = `sb-item sb-btn dx-${r.counts.block ? 'err' : r.counts.warn ? 'warn' : r.issues.length ? 'info' : 'ok'}`;
+        btn.onclick = () => this.showDoctorReport();
+        btn.title = `${r.checked} checks ran. Click for the full report.`;
+        clear(btn);
+        btn.append(
+          icon(r.counts.block ? 'warning' : r.issues.length ? 'probe' : 'check', { size: 12 }),
+          el('span', { text: r.counts.block ? `${r.counts.block} blocking`
+            : r.counts.warn ? `${r.counts.warn} warning${r.counts.warn === 1 ? '' : 's'}`
+              : r.issues.length ? `${r.issues.length} note${r.issues.length === 1 ? '' : 's'}` : 'Checks pass' }),
+        );
+      }
+    }
+
+    const rec = $('#statusRec');
+    if (rec) {
+      if (!this.macro?.isRecording) { rec.hidden = true; } else {
+        rec.hidden = false;
+        clear(rec);
+        rec.append(icon('record', { size: 12 }), el('span', { text: `Recording · ${this.macro.recording.steps.length}` }));
+      }
+    }
   }
 
   defaultKeyHints() {
@@ -1434,12 +1529,25 @@ class App {
     this.renderLearn();
   }
 
+  /**
+   * The card in the corner of the viewport.
+   *
+   * It starts as the eight-step tour and then becomes the why-tutor: once you
+   * have done the eight things, the card keeps its place on screen but switches
+   * to explaining the engineering reason behind whatever the document is
+   * currently doing. That ordering matters — an explanation of draft angles is
+   * noise to someone who has not yet made a box, and the single most useful
+   * thing to a person who has.
+   */
   renderLearn() {
     const card = $('#learnCard');
     if (!card) return;
+    if (!this.prefs.showLearn) { card.hidden = true; return; }
     const done = new Set(this.prefs.learnDone);
-    if (!this.prefs.showLearn || done.size >= this.LEARN_STEPS.length) { card.hidden = true; return; }
+    if (done.size >= this.LEARN_STEPS.length) { this.renderWhy(card); return; }
+
     card.hidden = false;
+    card.classList.remove('why');
     clear(card);
     const next = this.LEARN_STEPS.findIndex(([k]) => !done.has(k));
     card.append(
@@ -1451,6 +1559,38 @@ class App {
       el('ol', {}, this.LEARN_STEPS.slice(Math.max(0, next - 1), next + 2).map(([k, html]) =>
         el('li', { class: done.has(k) ? 'done' : '', html }))),
       el('div', { class: 'learn-bar' }, [el('i', { style: { width: `${(done.size / this.LEARN_STEPS.length) * 100}%` } })]),
+    );
+  }
+
+  renderWhy(card) {
+    if (!this.build) { card.hidden = true; return; }
+    const lesson = nextLesson(store.doc, this.build, this.report);
+    if (!lesson) { card.hidden = true; return; }
+    // Re-rendering the same lesson would restart its animation on every rebuild.
+    if (this._whyId === lesson.id && !card.hidden) return;
+    this._whyId = lesson.id;
+
+    card.hidden = false;
+    card.classList.add('why');
+    clear(card);
+    card.append(
+      el('h4', {}, [
+        icon(lesson.kind === 'finding' ? 'probe' : 'bulb', { size: 15 }),
+        el('span', { text: lesson.kind === 'finding' ? 'Why this matters' : 'Worth knowing' }),
+        el('button', {
+          class: 'mini-btn', title: 'Got it',
+          onclick: () => { dismissLesson(lesson.id); this._whyId = null; this.renderLearn(); },
+        }, [icon('check', { size: 13 })]),
+      ]),
+      el('div', { class: 'why-title', text: lesson.title }),
+      el('div', { class: 'why-body', text: lesson.body }),
+      el('div', { class: 'btn-row' }, [
+        el('button', {
+          class: 'btn sm', text: 'Got it',
+          onclick: () => { dismissLesson(lesson.id); this._whyId = null; this.renderLearn(); },
+        }),
+        el('button', { class: 'btn sm ghost', text: 'Stop showing these', onclick: () => this.toggleLearn() }),
+      ]),
     );
   }
 
@@ -1596,6 +1736,510 @@ class App {
     IO.exportBOM({ ...this.build, perFeature: per });
   }
 
+  /* ------------------------------------------------- the doctor, in full */
+
+  showDoctorReport() {
+    if (!this.build) return;
+    this.runDoctor();
+    const r = this.report;
+    if (!r) { this.flash('Continuous checking is switched off in Studio standards.', 'warn'); return; }
+    const proc = processOf(store.doc.studio?.process || Studio.standards().process);
+
+    const body = [
+      el('p', { class: 'hint', text: `${r.checked} checks ran against ${proc.label}. ${proc.note}` }),
+    ];
+    if (!r.issues.length) {
+      body.push(el('div', { class: 'banner ok', text: 'Everything passes. The model is ready to release.' }));
+    } else {
+      for (const issue of r.issues) {
+        const sev = issue.severity === 3 ? 'err' : issue.severity === 2 ? 'warn' : 'info';
+        body.push(el('div', { class: `dx-item ${sev}` }, [
+          el('div', { class: 'dx-head' }, [
+            el('span', { class: `dx-sev ${sev}`, text: severityLabel(issue.severity) }),
+            el('span', { class: 'dx-title', text: issue.title }),
+          ]),
+          issue.detail ? el('div', { class: 'dx-detail', text: issue.detail }) : null,
+          issue.why ? el('div', { class: 'dx-why', text: issue.why }) : null,
+          issue.fix ? el('div', { class: 'btn-row' }, [
+            el('button', {
+              class: 'btn sm primary', text: issue.fix.label,
+              onclick: (e) => { this.applyFix(issue); e.target.disabled = true; e.target.textContent = 'Applied'; },
+            }),
+          ]) : null,
+        ].filter(Boolean)));
+      }
+    }
+    modal({
+      title: 'Design doctor', icon: 'probe', wide: true,
+      subtitle: r.issues.length
+        ? `${r.counts.block} blocking · ${r.counts.warn} warnings · ${r.counts.note} notes`
+        : 'No findings',
+      body,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  /* --------------------------------------------------- cost and release */
+
+  showCostReport() {
+    if (!this.build) return;
+    const { parts, batch, rates, standards: s } = this.costInputs();
+    if (!parts.length) { this.flash('No bodies to cost.', 'warn'); return; }
+
+    const est = costDocument(parts, { batch, rates });
+    const body = [];
+
+    body.push(el('div', { class: 'banner warn', text: 'Order-of-magnitude estimates from a generic rate model, not a quote. Read the shape of the answer — which process wins, which dimension drives the price — and ignore the absolute figures.' }));
+
+    const qtyRow = el('div', { class: 'row wide' }, [
+      el('label', { text: 'Batch size' }),
+      select(String(batch), QUANTITIES.map(q => [String(q), String(q)]), (v) => {
+        const n = Number(v);
+        store.quiet((d) => { d.studio = { ...(d.studio || {}), batch: n }; });
+        Studio.setStandard('batch', n);
+        closeModal();
+        this.showCostReport();
+      }),
+    ]);
+    body.push(qtyRow);
+
+    body.push(el('div', { class: 'big-stat' }, [
+      el('span', { class: 'bs-value', text: est.each.toFixed(2) }),
+      el('span', { class: 'bs-unit', text: `${s.currency ? s.currency + ' ' : ''}per unit at ${batch} off` }),
+    ]));
+
+    for (const { part, cost } of est.rows) {
+      const cmp = compare(part, { batch, rates });
+      body.push(section(part.name, [
+        kv([
+          ['Cheapest process', cost.label],
+          ['Each', cost.each.toFixed(2)],
+          ['Material', `${cost.material.toFixed(2)}  (${(cost.materialKg * 1000).toFixed(0)} g billed)`],
+          ['Machine time', `${cost.machine.toFixed(2)}  (${cost.hours.toFixed(2)} h)`],
+          ['Setup, per part', cost.setup.toFixed(2)],
+          ['Tooling, per part', cost.tooling.toFixed(2)],
+        ]),
+        el('div', { class: 'hint', text: `Biggest cost driver: ${cost.drivers[0]?.label || 'none'}.` +
+          (cost.removedFraction > 0.6 ? ` ${(cost.removedFraction * 100).toFixed(0)}% of the stock block is cut away and thrown out.` : '') }),
+        el('table', { class: 'mass-table' }, [
+          el('thead', {}, [el('tr', {}, ['Process', 'Each', 'Material', 'Machine'].map(h => el('th', { text: h })))]),
+          el('tbody', {}, cmp.rows.map(row => el('tr', { class: row.processId === cost.processId ? 'on' : '' }, [
+            el('td', { text: row.label }),
+            el('td', { class: 'mono', text: row.each.toFixed(2) }),
+            el('td', { class: 'mono', text: row.material.toFixed(2) }),
+            el('td', { class: 'mono', text: row.machine.toFixed(2) }),
+          ]))),
+        ]),
+      ], true, { icon: 'gauge' }));
+    }
+
+    if (parts.length === 1) {
+      const cross = crossovers(parts[0], { rates });
+      const lev = levers(parts[0], { batch, rates });
+      body.push(section('How quantity changes the answer', [
+        el('table', { class: 'mass-table' }, [
+          el('thead', {}, [el('tr', {}, ['Quantity', 'Cheapest', 'Each'].map(h => el('th', { text: h })))]),
+          el('tbody', {}, cross.points.map(pt => el('tr', {}, [
+            el('td', { class: 'mono', text: String(pt.qty) }),
+            el('td', { text: pt.label || '–' }),
+            el('td', { class: 'mono', text: pt.each.toFixed(2) }),
+          ]))),
+        ]),
+        ...cross.changes.map(c => el('div', { class: 'hint', text: `Between ${c.from.qty} and ${c.to.qty} off, ${c.to.label} overtakes ${c.from.label}.` })),
+        cross.changes.length ? null : el('div', { class: 'hint', text: 'One process wins at every quantity here, so the decision does not hinge on volume.' }),
+      ].filter(Boolean), true, { icon: 'timeline' }));
+
+      if (lev.length) {
+        body.push(section('What would make it cheaper', lev.map(l => el('div', { class: 'dx-item info' }, [
+          el('div', { class: 'dx-head' }, [
+            el('span', { class: 'dx-sev info', text: `−${(l.saving * 100).toFixed(0)}%` }),
+            el('span', { class: 'dx-title', text: l.label }),
+          ]),
+          el('div', { class: 'dx-why', text: l.note }),
+          el('div', { class: 'dx-detail', text: `${l.each.toFixed(2)} each by ${l.process}.` }),
+        ])), true, { icon: 'bulb' }));
+      }
+    }
+
+    modal({
+      title: 'Cost estimate', icon: 'gauge', wide: true,
+      subtitle: `${parts.length} part${parts.length === 1 ? '' : 's'} · batch of ${batch} · ${est.mass.toFixed(3)} kg total`,
+      body,
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  showRelease() {
+    if (!this.build) return;
+    const s = Studio.standards();
+    const proc = store.doc.studio?.process || s.process;
+    const batch = store.doc.studio?.batch || s.batch;
+    this.runDoctor();
+    const r = this.report || diagnose(store.doc, this.build, { process: proc });
+    const blocking = r.issues.filter(i => i.severity === 3);
+
+    const body = [
+      el('p', { class: 'hint', text: 'One archive with the geometry, the drawing, the bill of materials, the cost basis, the editable source and a record of every check that ran.' }),
+      el('div', { class: 'row wide' }, [
+        el('label', { text: 'Process' }),
+        select(proc, Object.entries(PROCESSES).map(([k, v]) => [k, v.label]), (v) => {
+          store.quiet((d) => { d.studio = { ...(d.studio || {}), process: v }; });
+          Studio.setStandard('process', v);
+          closeModal(); this.showRelease();
+        }),
+      ]),
+      el('div', { class: 'row wide' }, [
+        el('label', { text: 'Batch size' }),
+        select(String(batch), QUANTITIES.map(q => [String(q), String(q)]), (v) => {
+          store.quiet((d) => { d.studio = { ...(d.studio || {}), batch: Number(v) }; });
+          Studio.setStandard('batch', Number(v));
+          closeModal(); this.showRelease();
+        }),
+      ]),
+    ];
+
+    if (blocking.length) {
+      body.push(el('div', { class: 'banner err', text: `${blocking.length} blocking finding${blocking.length === 1 ? '' : 's'} must be cleared first. Releasing is the moment an error costs the most, so this one is not a warning you can click past.` }));
+      for (const i of blocking) {
+        body.push(el('div', { class: 'dx-item err' }, [
+          el('div', { class: 'dx-head' }, [el('span', { class: 'dx-title', text: i.title })]),
+          i.detail ? el('div', { class: 'dx-detail', text: i.detail }) : null,
+          i.fix ? el('div', { class: 'btn-row' }, [
+            el('button', {
+              class: 'btn sm primary', text: i.fix.label,
+              onclick: () => { this.applyFix(i); closeModal(); setTimeout(() => this.showRelease(), 60); },
+            }),
+          ]) : null,
+        ].filter(Boolean)));
+      }
+    } else {
+      body.push(el('div', { class: 'banner ok', text: `All ${r.checked} checks pass. ${r.counts.warn} warning${r.counts.warn === 1 ? '' : 's'} and ${r.counts.note} note${r.counts.note === 1 ? '' : 's'} will be recorded in the package.` }));
+    }
+
+    modal({
+      title: 'Release design', icon: 'download', wide: true,
+      subtitle: store.doc.meta.name,
+      body,
+      actions: [
+        { label: 'Cancel' },
+        {
+          label: blocking.length ? 'Release anyway' : 'Build the package',
+          primary: !blocking.length, danger: !!blocking.length,
+          run: () => {
+            const out = releasePackage(this, { process: proc, batch, force: true });
+            if (!out.ok) this.flash(out.reason || 'Release failed', 'err', 6000);
+            else this.flash(`${out.name}: ${out.files.length} files`, 'ok', 5000);
+          },
+        },
+      ],
+    });
+  }
+
+  /* ------------------------------------------------------- design brief */
+
+  showBrief() {
+    const s = Studio.standards();
+    let id = ARCHETYPE_IDS[0];
+    let material = s.material;
+    const values = {};
+
+    const host = el('div');
+    const preview = el('div', { class: 'brief-preview' });
+
+    const renderPreview = () => {
+      clear(preview);
+      let result;
+      try { result = synthesise(id, values, { material, process: s.process }); }
+      catch (e) { preview.appendChild(el('div', { class: 'banner err', text: e.message })); return null; }
+
+      preview.append(
+        el('div', { class: 'msec-head', text: 'How it will be sized' }),
+        el('ul', { class: 'why-list' }, result.rationale.map(t => el('li', { text: t }))),
+      );
+      if (result.warnings.length) {
+        for (const w of result.warnings) preview.appendChild(el('div', { class: 'banner warn', text: w }));
+      }
+      preview.append(
+        el('div', { class: 'msec-head', text: `${result.params.length} parameters, ${result.features.length} features` }),
+        el('div', { class: 'hint', text: result.params.map(p => p.name).join(' · ') }),
+        el('div', { class: 'hint', text: `Every dimension above is written into the model as an expression, so changing the load changes the part.` }),
+      );
+      return result;
+    };
+
+    const renderFields = () => {
+      clear(host);
+      const arch = ARCHETYPES[id];
+      for (const f of arch.fields) if (values[f.key] === undefined) values[f.key] = f.def;
+
+      host.appendChild(el('div', { class: 'card-grid' }, ARCHETYPE_IDS.map(k => el('button', {
+        class: `card${k === id ? ' on' : ''}`,
+        onclick: () => { id = k; for (const key of Object.keys(values)) delete values[key]; renderFields(); },
+      }, [
+        icon(ARCHETYPES[k].icon, { size: 20 }),
+        el('b', { text: ARCHETYPES[k].label }),
+        el('span', { text: ARCHETYPES[k].blurb }),
+      ]))));
+
+      // The blurb is already on the selected card; repeating it here just
+      // pushed the live sizing below the fold.
+      const fields = el('div', { class: 'brief-fields' });
+      const grid = el('div', { class: 'brief-grid' }, [fields, preview]);
+
+      for (const f of arch.fields) {
+        let control;
+        if (f.kind === 'bool') {
+          fields.appendChild(checkbox(f.label, !!values[f.key], (v) => { values[f.key] = v; renderPreview(); }));
+          continue;
+        }
+        if (f.kind === 'select') {
+          control = select(values[f.key], f.options.map(o => [o, o]), (v) => { values[f.key] = v; renderPreview(); });
+        } else {
+          const i = el('input', { type: 'number', value: String(values[f.key]), step: 'any' });
+          i.addEventListener('input', () => { values[f.key] = Number(i.value); renderPreview(); });
+          control = i;
+        }
+        fields.appendChild(el('div', { class: 'row wide' }, [
+          el('label', { text: f.unit ? `${f.label} (${f.unit})` : f.label }), control,
+        ]));
+      }
+
+      fields.appendChild(el('div', { class: 'row wide' }, [
+        el('label', { text: 'Material' }),
+        select(material, Object.entries(MATERIALS).map(([k, m]) => [k, `${m.name}${STRENGTH[k] ? ` · ${STRENGTH[k].yield} MPa` : ''}`]), (v) => {
+          material = v; renderPreview();
+        }),
+      ]));
+      host.appendChild(grid);
+      renderPreview();
+    };
+
+    renderFields();
+
+    modal({
+      title: 'Design brief', icon: 'bulb', wide: true,
+      subtitle: 'State the requirement; get an editable parametric model with the sizing shown.',
+      body: [
+        el('div', { class: 'banner warn', text: 'Closed-form textbook calculations on idealised sections. No stress concentrations, no fatigue, no buckling, no real boundary conditions. Not a substitute for analysis or for an engineer signing it off.' }),
+        host,
+      ],
+      actions: [
+        { label: 'Cancel' },
+        {
+          label: 'Build the model', primary: true,
+          run: () => {
+            const result = synthesise(id, values, { material, process: s.process });
+            this.applyBrief(result, values);
+          },
+        },
+      ],
+    });
+  }
+
+  /** Turn a synthesised brief into a real document, in one undoable step. */
+  applyBrief(result, values) {
+    store.edit(`Design brief: ${result.label}`, (d) => {
+      d.params = result.params.map(p => ({ id: uid('p'), name: p.name, value: p.value, note: p.note }));
+      const made = [];
+      for (const spec of result.features) {
+        const f = makeFeature(spec.type, {
+          name: spec.name,
+          params: spec.params,
+          material: result.material,
+          pos: spec.pos,
+          inputs: (spec.inputs || []).map(i => made[i]?.id).filter(Boolean),
+        });
+        made.push(f);
+      }
+      d.features = made;
+      d.meta.notes = briefNotes(result, values);
+    });
+    Studio.logDecision({
+      title: `${result.label} from a design brief`,
+      choice: result.rationale[0] || '',
+      why: result.rationale.join(' '),
+      doc: store.doc.meta.name,
+    });
+    this.markLearn('create');
+    setTimeout(() => this.vp.frameAll(), 120);
+    this.flash(`${result.label} built. The sizing is in Document → notes.`, 'ok', 5200);
+  }
+
+  /* ------------------------------------------------------------ macros */
+
+  showMacros() {
+    const render = () => {
+      const list = this.macro.list;
+      const body = [
+        el('p', { class: 'hint', text: 'A macro is a recorded run of commands. Press record, do the thing once, press stop. Replaying it is a single undo step. Only commands from the registry are captured, so a drag in the viewport is not recorded.' }),
+      ];
+
+      if (this.macro.isRecording) {
+        body.push(el('div', { class: 'banner warn', text: `Recording “${this.macro.recording.name}” · ${this.macro.recording.steps.length} step${this.macro.recording.steps.length === 1 ? '' : 's'} so far.` }));
+      }
+
+      if (!list.length) {
+        body.push(emptyState('No macros yet', 'Record one from Studio → Record macro, or press the record button below.', 'record'));
+      } else {
+        for (const m of list) {
+          body.push(el('div', { class: 'dx-item info' }, [
+            el('div', { class: 'dx-head' }, [
+              el('span', { class: 'dx-title', text: m.name }),
+              el('span', { class: 'pill', text: `${m.steps.length} steps` }),
+            ]),
+            el('div', { class: 'dx-detail', text: m.steps.map(x => this.commandMap.get(x.id)?.label || x.id).join(' → ') }),
+            m.needsSelection ? el('div', { class: 'dx-why', text: 'Some of its commands act on the selection, so select something before you run it.' }) : null,
+            el('div', { class: 'btn-row' }, [
+              el('button', {
+                class: 'btn sm primary', text: 'Run',
+                onclick: () => {
+                  const out = this.macro.run(m);
+                  this.flash(out.ok
+                    ? `Ran ${out.ran} of ${out.total} steps${out.failed.length ? `, ${out.failed.length} skipped` : ''}. Ctrl Z undoes all of it.`
+                    : `Nothing ran: ${out.reason || out.failed[0]?.why || 'no applicable commands'}`,
+                  out.ok ? 'ok' : 'warn', 5000);
+                },
+              }),
+              el('button', {
+                class: 'btn sm', text: 'Rename',
+                onclick: () => promptDialog('Rename macro', 'Name', m.name, (v) => {
+                  if (v) { this.macro.rename(m.id, v); closeModal(); this.showMacros(); }
+                }),
+              }),
+              el('button', {
+                class: 'btn sm danger', text: 'Delete',
+                onclick: () => { this.macro.remove(m.id); closeModal(); this.showMacros(); },
+              }),
+            ]),
+          ].filter(Boolean)));
+        }
+      }
+
+      modal({
+        title: 'Macros', icon: 'record', wide: true,
+        subtitle: `${list.length} recorded`,
+        body,
+        actions: [
+          this.macro.isRecording
+            ? { label: 'Stop recording', primary: true, run: () => this.stopMacro() }
+            : { label: 'Record a new macro', primary: true, run: () => this.startMacro() },
+          { label: 'Close' },
+        ],
+      });
+    };
+    render();
+  }
+
+  startMacro() {
+    promptDialog('Record a macro', 'Name it', 'My workflow', (name) => {
+      this.macro.start(name || 'Macro');
+      this.flash('Recording. Every command you run is captured until you stop.', 'info', 5000);
+      this.refreshUI();
+    }, { help: 'Do the workflow once, then stop. Replay is one undo step.' });
+  }
+
+  stopMacro() {
+    const m = this.macro.stop();
+    if (!m) { this.flash('Nothing replayable was recorded.', 'warn'); this.refreshUI(); return; }
+    this.flash(`Saved “${m.name}” with ${m.steps.length} steps.`, 'ok', 4500);
+    this.refreshUI();
+  }
+
+  /* ------------------------------------------------- studio standards */
+
+  showStudio() {
+    const s = Studio.standards();
+    const set = (k) => (v) => { Studio.setStandard(k, v); this.runDoctor(); this.refreshUI(); };
+
+    const body = [
+      el('p', { class: 'hint', text: 'Settings the software should only need to be told once. They seed every new document and are what the Design Doctor measures against. Everything here stays in this browser.' }),
+
+      section('House defaults', [
+        field('Units', select(s.units, Object.keys(UNITS).map(u => [u, u]), set('units'))),
+        field('Material', select(s.material, Object.entries(MATERIALS).map(([k, m]) => [k, m.name]), set('material'))),
+        field('Process', select(s.process, Object.entries(PROCESSES).map(([k, p]) => [k, p.label]), set('process'))),
+        field('Batch size', select(String(s.batch), QUANTITIES.map(q => [String(q), String(q)]), (v) => set('batch')(Number(v)))),
+        (() => {
+          const i = el('input', { type: 'text', value: s.author || '', placeholder: 'Name on every new document' });
+          i.addEventListener('change', () => Studio.setStandard('author', i.value));
+          return field('Author', i);
+        })(),
+      ], true, { icon: 'workspace' }),
+
+      section('Manufacturing limits', [
+        el('div', { class: 'hint', text: `Leave blank to use the process defaults. ${processOf(s.process).label}: ${processOf(s.process).minWall}mm wall, ${processOf(s.process).minFeature}mm feature, ±${processOf(s.process).tolerance}mm.` }),
+        ...[['minWall', 'Minimum wall'], ['minFeature', 'Minimum feature'], ['tolerance', 'Tolerance ±']].map(([k, label]) => {
+          const i = el('input', { type: 'number', step: '0.1', value: s[k] ?? '', placeholder: 'process default' });
+          i.addEventListener('change', () => Studio.setStandard(k, i.value === '' ? null : Number(i.value)));
+          return field(label, i);
+        }),
+      ], false, { icon: 'ruler' }),
+
+      section('Behaviour', [
+        checkbox('Check the model continuously', s.autoDoctor, (v) => { Studio.setStandard('autoDoctor', v); this.runDoctor(); this.refreshUI(); }),
+        checkbox('Seed new documents from these standards', s.seedNewDocuments, set('seedNewDocuments')),
+      ], false, { icon: 'settings' }),
+
+      section('Decision log', [
+        el('div', { class: 'hint', text: 'What was chosen and why. Written whenever you accept a repair or build from a brief, and kept across projects, because the reasoning behind a design outlives the file that carries it.' }),
+        ...(() => {
+          const d = Studio.decisions();
+          if (!d.length) return [el('div', { class: 'hint', text: 'Nothing recorded yet.' })];
+          return d.slice(0, 20).map(x => el('div', { class: 'dx-item info' }, [
+            el('div', { class: 'dx-head' }, [
+              el('span', { class: 'dx-title', text: x.title }),
+              el('span', { class: 'pill', text: new Date(x.at).toISOString().slice(0, 10) }),
+            ]),
+            x.choice ? el('div', { class: 'dx-detail', text: x.choice }) : null,
+            x.why ? el('div', { class: 'dx-why', text: x.why }) : null,
+            x.doc ? el('div', { class: 'hint', text: x.doc }) : null,
+          ].filter(Boolean)));
+        })(),
+      ], false, { icon: 'history', badge: Studio.decisions().length }),
+
+      section('Portability', [
+        el('div', { class: 'hint', text: 'Standards, decisions and macros as one file, to move between machines or hand to a colleague.' }),
+        el('div', { class: 'btn-row' }, [
+          el('button', { class: 'btn sm', text: 'Export studio', onclick: () => IO.download('tessercad-studio.json', Studio.exportStudio(), 'application/json') }),
+          el('button', {
+            class: 'btn sm', text: 'Import studio…',
+            onclick: async () => {
+              const file = await this.pickFileAsync('.json');
+              if (!file) return;
+              try { Studio.importStudio(await file.text()); closeModal(); this.showStudio(); this.flash('Studio imported.', 'ok'); }
+              catch (e) { this.flash(e.message, 'err', 6000); }
+            },
+          }),
+          el('button', {
+            class: 'btn sm danger', text: 'Reset standards',
+            onclick: () => confirmDialog('Reset standards', 'Put every house default back to the factory setting. Decisions and macros are kept.', () => {
+              Studio.resetStandards(); closeModal(); this.showStudio();
+            }, { danger: true, yes: 'Reset' }),
+          }),
+        ]),
+      ], false, { icon: 'file-export' }),
+    ];
+
+    modal({ title: 'Studio standards', icon: 'workspace', wide: true, body, actions: [{ label: 'Done', primary: true }] });
+  }
+
+  showLessons() {
+    const list = allLessons();
+    const p = whyProgress();
+    modal({
+      title: 'Engineering notes', icon: 'book', wide: true,
+      subtitle: `${p.read} of ${p.total} read`,
+      body: [
+        el('p', { class: 'hint', text: 'These surface one at a time in the viewport, at the point where the model is actually doing the thing they describe. Here they all are at once.' }),
+        ...list.map(l => section(l.title, [el('p', { text: l.body })], false, { icon: l.read ? 'check' : 'bulb' })),
+      ],
+      actions: [
+        { label: 'Show them all again', run: () => { resetWhy(); this._whyId = null; this.renderLearn(); } },
+        { label: 'Close', primary: true },
+      ],
+    });
+  }
+
   showShortcuts() {
     const groups = {};
     for (const c of this.commands) {
@@ -1693,7 +2337,15 @@ class App {
     const c = this.commandMap.get(id);
     if (!c) { console.warn('unknown command', id); return; }
     if (c.enabled && !c.enabled()) { this.flash(`${c.label} is not available right now`, 'warn', 2000); return; }
+    // Every surface routes through here, so recording one function records the
+    // menus, the ribbon, the palette, the quick menu and the keyboard at once.
+    this.macro?.capture(id);
     c.run();
+  }
+
+  exportDesignIntent() {
+    if (!this.build) return;
+    exportIntent(store.doc, this.build);
   }
 
   openPalette() {
@@ -1776,6 +2428,9 @@ class App {
     input.addEventListener('change', async () => {
       const file = input.files?.[0];
       input.value = '';
+      // A pending pickFileAsync takes the file instead of the importer, so one
+      // hidden input can serve both "open a model" and "read this settings file".
+      if (this._pendingPick) { const r = this._pendingPick; this._pendingPick = null; r(file || null); return; }
       if (!file) return;
       try { await IO.importAny(file); this.vp.frameAll(); }
       catch (e) { this.flash(e.message, 'err', 6000); }
@@ -1795,6 +2450,23 @@ class App {
     const input = $('#fileInput');
     input.accept = accept;
     input.click();
+  }
+
+  /** Pick a file and get it back, rather than handing it to the importer. */
+  pickFileAsync(accept) {
+    return new Promise((resolve) => {
+      const input = $('#fileInput');
+      this._pendingPick = resolve;
+      input.accept = accept;
+      input.click();
+      // A cancelled picker fires no event in most browsers, so the promise would
+      // hang for the life of the page. One window focus later, give up.
+      const bail = () => {
+        setTimeout(() => { if (this._pendingPick === resolve) { this._pendingPick = null; resolve(null); } }, 700);
+        removeEventListener('focus', bail);
+      };
+      setTimeout(() => addEventListener('focus', bail, { once: true }), 0);
+    });
   }
 
   bindKeys() {
