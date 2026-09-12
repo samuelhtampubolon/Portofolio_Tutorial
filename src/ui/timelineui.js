@@ -3,7 +3,7 @@
  * build-sequence Gantt view. Rendered as DOM so keys stay clickable and
  * draggable without hit-testing a canvas.
  */
-import { el, clear } from './shell.js';
+import { el, clear, icon } from './shell.js';
 import { store } from '../core/doc.js';
 import { bus, T } from '../core/bus.js';
 import { ANIM_PROPS, sortTrack } from '../sim/sim.js';
@@ -16,7 +16,10 @@ export class TimelineUI {
     this.pxPerSec = 60;
     this._build();
     bus.on(T.TIME, () => this.updatePlayhead());
-    bus.on(T.SIM_STATE, ({ playing }) => { this.playBtn.textContent = playing ? '⏸' : '▶'; this.playBtn.classList.toggle('on', playing); });
+    bus.on(T.SIM_STATE, ({ playing }) => {
+      clear(this.playBtn).appendChild(icon(playing ? 'pause' : 'play', { size: 14 }));
+      this.playBtn.classList.toggle('on', playing);
+    });
     addEventListener('resize', () => this.layout());
   }
 
@@ -26,17 +29,17 @@ export class TimelineUI {
     /* --- transport --- */
     const bar = el('div', { class: 'tl-bar' });
     const transport = el('div', { class: 'tl-transport' });
-    const btn = (glyph, title, fn) => {
-      const b = el('button', { title, text: glyph, onclick: fn });
+    const btn = (name, title, fn) => {
+      const b = el('button', { title, onclick: fn }, [icon(name, { size: 14 })]);
       transport.appendChild(b);
       return b;
     };
-    btn('⏮', 'Go to start (Home)', () => this.app.sim.seek(0));
-    btn('⟨', 'Previous frame (,)', () => this.app.sim.step(-1));
-    this.playBtn = btn('▶', 'Play / pause (Space)', () => this.app.sim.toggle());
-    btn('⟩', 'Next frame (.)', () => this.app.sim.step(1));
-    btn('⏭', 'Go to end (End)', () => this.app.sim.seek(store.doc.sim.duration));
-    btn('⏹', 'Stop and rewind', () => this.app.sim.stop());
+    btn('rewind', 'Go to start  (Home)', () => this.app.sim.seek(0));
+    btn('step-back', 'Previous frame  (,)', () => this.app.sim.step(-1));
+    this.playBtn = btn('play', 'Play / pause  (Space)', () => this.app.sim.toggle());
+    btn('step-fwd', 'Next frame  (.)', () => this.app.sim.step(1));
+    btn('forward', 'Go to end  (End)', () => this.app.sim.seek(store.doc.sim.duration));
+    btn('stop', 'Stop and rewind', () => this.app.sim.stop());
 
     this.timeLabel = el('span', { class: 'tl-time', text: '0.00 s' });
 
@@ -75,9 +78,9 @@ export class TimelineUI {
       el('label', { class: 'chk' }, [loop, el('span', { text: 'Loop' })]),
       el('label', { class: 'chk' }, [schedule, el('span', { text: 'Build sequence' })]),
       el('span', { style: { flex: '1' } }),
-      el('button', { class: 'btn sm', text: 'Auto-sequence', onclick: () => this.app.autoSchedule() }),
-      el('button', { class: 'btn sm', text: '● Record', onclick: () => this.app.run('sim.record') }),
-      el('button', { class: 'mini-btn', text: '✕', title: 'Hide the timeline', onclick: () => this.app.setTimelineVisible(false) }),
+      el('button', { class: 'btn sm', onclick: () => this.app.autoSchedule() }, [icon('sequence', { size: 13 }), 'Sequence']),
+      el('button', { class: 'btn sm', onclick: () => this.app.run('sim.record') }, [icon('record', { size: 13 }), 'Record']),
+      el('button', { class: 'mini-btn', title: 'Hide the timeline', onclick: () => this.app.setTimelineVisible(false) }, [icon('close', { size: 14 })]),
     );
 
     /* --- tracks --- */
@@ -169,7 +172,11 @@ export class TimelineUI {
 
     const ids = [...this.app.vp.bodies.keys()];
     if (!ids.length) {
-      this.trackCol.appendChild(el('div', { class: 'empty-note', text: 'No bodies yet' }));
+      this.trackCol.appendChild(el('div', { class: 'empty-note' }, [
+        icon('cube3d', { size: 22, cls: 'empty-icon' }),
+        el('b', { text: 'No bodies yet' }),
+        el('span', { text: 'Add a solid in the Model workspace.' }),
+      ]));
       return;
     }
 
@@ -187,9 +194,9 @@ export class TimelineUI {
         onclick: () => { this.app.select([id], false); },
       }, [
         el('span', {
-          class: 'mini-btn', text: open ? '▾' : '▸',
+          class: 'mini-btn',
           onclick: (e) => { e.stopPropagation(); open ? this.expanded.delete(id) : this.expanded.add(id); this.render(); },
-        }),
+        }, [icon(open ? 'chevron-down' : 'chevron-right', { size: 12 })]),
         el('span', { class: 'tn-swatch', style: { background: f.appearance.color } }),
         el('span', { class: 'tname', text: f.name, title: f.name }),
         keyCount ? el('span', { class: 'pill', text: String(keyCount) }) : null,
@@ -236,14 +243,14 @@ export class TimelineUI {
         this.trackCol.appendChild(el('div', { class: 'tl-track-head sub' }, [
           el('span', { class: 'tname', text: p.label }),
           el('span', {
-            class: 'mini-btn', text: '◆', title: `Add a ${p.label} key at the playhead`,
+            class: 'mini-btn', title: `Add a ${p.label} key at the playhead`,
             onclick: (e) => {
               e.stopPropagation();
               const v = keys.length ? keys[keys.length - 1].v : p.def;
               this.app.sim.setKey(id, p.key, this.app.sim.time, v, this.app.defaultEase);
               this.app.refreshSim(); this.render();
             },
-          }),
+          }, [icon('key', { size: 12 })]),
         ]));
         const prow = el('div', { class: 'tl-row', style: { width: `${width}px` } });
         for (const k of keys) {

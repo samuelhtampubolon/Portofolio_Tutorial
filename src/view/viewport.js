@@ -25,6 +25,8 @@ export class Viewport {
     this.onSelect = null;
     this.onTransformEnd = null;
     this.onHover = null;
+    this.onContext = null;
+    this.onPointerMove = null;
     this._raf = 0;
     this._needsRender = true;
     this._init();
@@ -292,7 +294,7 @@ export class Viewport {
           mesh.userData = { featureId: f.id, pickable: true };
           group.add(mesh);
           if (showEdges) {
-            const eg = featureEdges(inst.geometry, 24);
+            const eg = featureEdges(inst.geometry, this.edgeAngle || 24);
             const line = new THREE.LineSegments(eg, this._edgeMaterial());
             line.matrixAutoUpdate = false;
             line.matrix.copy(inst.matrix);
@@ -375,8 +377,10 @@ export class Viewport {
           child.material.color.set(on ? 0xff9f1c : 0x000000);
           child.material.opacity = on ? 0.95 : 0.42;
         } else if (child.material && child.material.emissive) {
-          child.material.emissive.set(on ? 0x8a4a00 : 0x000000);
-          child.material.emissiveIntensity = on ? 0.55 : 0;
+          // a hint of warmth, not a recolour — the orange edge overlay is the
+          // real selection signal, and it reads on both themes
+          child.material.emissive.set(on ? 0x6b3a00 : 0x000000);
+          child.material.emissiveIntensity = on ? 0.26 : 0;
         }
       }
       // selection box for bodies without an edge overlay
@@ -451,6 +455,7 @@ export class Viewport {
 
     el.addEventListener('pointermove', (e) => {
       this._updatePointer(e);
+      if (this.onPointerMove) this.onPointerMove(e);
       if (this.measureMode) this.invalidate();
       // Skip the hover raycast while orbiting or dragging the gizmo.
       if (this.onHover && !down && !this.gizmo.dragging && e.buttons === 0) {
@@ -471,7 +476,18 @@ export class Viewport {
     });
 
     el.addEventListener('dblclick', () => { if (this.selection.size) this.frameSelection(); });
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    let rightDown = null;
+    el.addEventListener('pointerdown', (e) => { if (e.button === 2) rightDown = { x: e.clientX, y: e.clientY }; });
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      // a right-drag is a pan, not a menu
+      if (rightDown && Math.hypot(e.clientX - rightDown.x, e.clientY - rightDown.y) > 4) { rightDown = null; return; }
+      rightDown = null;
+      if (!this.onContext) return;
+      this._updatePointer(e);
+      this.onContext(e, this.pick());
+    });
   }
 
   _updatePointer(e) {

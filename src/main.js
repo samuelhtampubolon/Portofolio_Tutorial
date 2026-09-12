@@ -1,33 +1,56 @@
 /**
  * TesserCAD — application controller.
  *
- * Wires the document store, the geometry engine, the three workspaces
- * (Model / Draft / Simulate) and the whole command surface together.
+ * Owns the three workspaces, the command registry, the chrome (menu bar,
+ * ribbon, panels, status bar) and the keyboard map. Everything the user can
+ * do is a command; the chrome is generated from those commands so a new
+ * feature appears in the menus, the ribbon, the palette and the keyboard map
+ * at the same time.
  */
 import * as THREE from 'three';
 import { bus, T } from './core/bus.js';
 import {
-  store, newDocument, makeFeature, makeLayer, catalogOf, CATALOG, MATERIALS,
-  saveLocal, loadLocal, clearLocal, APP_NAME, APP_VERSION, FILE_EXT, UNITS, toDisplay, uid,
+  store, newDocument, makeFeature, makeLayer, catalogOf, CATALOG, MATERIALS, UNITS,
+  saveLocal, loadLocal, clearLocal, APP_NAME, APP_VERSION, FILE_EXT, toDisplay, uid,
 } from './core/doc.js';
 import { rebuild, invalidateCache, massProperties } from './core/rebuild.js';
-import { evalSafe } from './core/expr.js';
+import { evalSafe, EXPR_HELP } from './core/expr.js';
 import { Viewport } from './view/viewport.js';
 import { Draft2D, DRAW_TOOLS, fmt, rotateEntity, scaleEntity, mirrorEntity, entityBBox } from './draft/draft.js';
 import { Simulator } from './sim/sim.js';
 import { recordTimeline, recordingSupported } from './sim/recorder.js';
 import * as IO from './io/io.js';
 import {
-  el, $, clear, toast, status, modal, closeModal, isModalOpen, confirmDialog,
-  promptDialog, dropdown, closeDropdown, commandPalette,
+  el, $, $$, clear, toast, status, modal, closeModal, isModalOpen, confirmDialog, promptDialog,
+  dropdown, closeDropdown, isDropdownOpen, contextMenu, commandPalette, quickMenu, closeQuickMenu,
+  isQuickMenuOpen, field, checkbox, select, segmented, section, kv, scrubNumber, emptyState, icon,
 } from './ui/shell.js';
+import { buildCommands, TEMPLATES, registerFeatureFactory, ICON_FOR } from './ui/commands.js';
+import { menuDefs, ribbonDefs, quickDefaults, viewportContextMenu, SHORT_LABEL } from './ui/menus.js';
+import { OperatorHost } from './ui/operators.js';
 import { renderLeftPanel } from './ui/tree.js';
 import { renderRightPanel } from './ui/inspector.js';
 import { TimelineUI } from './ui/timelineui.js';
 
-/* ==================================================================
-   Application
-   ================================================================== */
+registerFeatureFactory(makeFeature);
+
+const PREFS_KEY = 'tessercad.prefs.v1';
+const DEFAULT_PREFS = {
+  theme: 'dark',
+  gizmoSize: 0.85,
+  snapStep: 5,
+  autosaveSec: 20,
+  showLearn: true,
+  confirmDelete: false,
+  edgeAngle: 24,
+  learnDone: [],
+};
+
+const WS_META = {
+  model: { label: 'Model', icon: 'cube3d', hint: 'Model — add solids, combine them, and drive every dimension from a parameter.' },
+  draft: { label: 'Draft', icon: 'sketch', hint: 'Draft — draw a 2D profile, then extrude or revolve it into the model.' },
+  sim: { label: 'Simulate', icon: 'timeline', hint: 'Simulate — scrub the timeline, key poses, sequence the build or run the physics.' },
+};
 
 class App {
   constructor() {
@@ -35,25 +58,41 @@ class App {
     this.selection = new Set();
     this.build = null;
     this.defaultEase = 'smooth';
-    this.gizmoMode = 'translate';
+    this.gizmoMode = null;
+    this.isolated = null;
     this._rebuildTimer = 0;
+    this.prefs = this.loadPrefs();
   }
 
+  /* ================================================================ boot */
+
   boot() {
+    document.documentElement.setAttribute('data-theme', this.prefs.theme);
+
     this.vp = new Viewport($('#viewport3d'));
+    this.vp.edgeAngle = this.prefs.edgeAngle;
+    this.vp.gizmo.setSize(this.prefs.gizmoSize);
     this.draft = new Draft2D($('#viewport2d'));
     this.sim = new Simulator(this.vp);
     this.timeline = new TimelineUI(this);
+    this.ops = new OperatorHost(this, $('#opHud'));
 
     this.vp.onSelect = (id, additive) => this.select(id ? [id] : [], additive);
     this.vp.onTransformEnd = () => this.commitGizmo();
     this.vp.onTransformDrag = () => this.previewGizmo();
+    this.vp.onContext = (e, hit) => this.showViewportMenu(e, hit);
+    this.vp.onPointerMove = () => { if (this.ops.running) this.ops.onPointerMove(); };
     this.draft.onStatus = (s) => this.draftStatus(s);
-    this.draft.onEntityAdded = () => this.refreshUI();
+    this.draft.onEntityAdded = () => { this.markLearn('draw'); this.refreshUI(); };
     this.draft.onTextRequest = (place) => promptDialog('Add text', 'Text', '', (v) => { place(v); this.refreshUI(); },
       { placeholder: 'PLATE A', help: 'Height comes from “Text / dim size” in the right panel.' });
 
-    this.buildCommands();
+    this.commands = buildCommands(this);
+    this.commandMap = new Map(this.commands.map(c => [c.id, c]));
+
+    this.buildWorkspaceTabs();
+    this.buildDocChip();
+    this.buildTopActions();
     this.buildMenus();
     this.buildViewCube();
     this.bindGlobalUI();
@@ -65,14 +104,15 @@ class App {
     bus.on(T.SELECTION, (p) => { if (p.source === 'draft') this.refreshUI(); });
     bus.on('measure:result', (r) => this.showMeasure(r));
 
-    this.restoreOrWelcome();
+    this.restoreSession();
     this.setWorkspace('model');
     this.rebuildNow();
     this.vp.frameAll();
     this.draft.start();
     this.draft.resize();
+    this.renderLearn();
 
-    setInterval(() => { if (store.dirty) { saveLocal(); this.markSaved(); } }, 20000);
+    this._autosave = setInterval(() => { if (store.dirty) { saveLocal(); this.markSaved(); } }, Math.max(5, this.prefs.autosaveSec) * 1000);
     addEventListener('beforeunload', (e) => {
       saveLocal();
       if (store.dirty) { e.preventDefault(); e.returnValue = ''; }
@@ -80,71 +120,163 @@ class App {
     addEventListener('resize', () => { this.draft.resize(); this.vp.resize(); });
 
     $('#boot').classList.add('gone');
-    setTimeout(() => $('#boot').remove(), 400);
+    setTimeout(() => $('#boot')?.remove(), 400);
   }
 
-  /* ------------------------------------------------------- document ops */
+  /* ============================================================= prefs */
 
-  restoreOrWelcome() {
+  loadPrefs() {
+    try { return { ...DEFAULT_PREFS, ...(JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')) }; }
+    catch { return { ...DEFAULT_PREFS }; }
+  }
+
+  savePrefs() {
+    try { localStorage.setItem(PREFS_KEY, JSON.stringify(this.prefs)); } catch { /* ignore */ }
+  }
+
+  setPref(key, value) {
+    this.prefs[key] = value;
+    this.savePrefs();
+    if (key === 'gizmoSize') this.vp.gizmo.setSize(value);
+    if (key === 'edgeAngle') { this.vp.edgeAngle = value; this.refreshBodies(true); }
+  }
+
+  /* ========================================================== documents */
+
+  restoreSession() {
     const saved = loadLocal();
-    if (saved && saved.doc && (saved.doc.features?.length || saved.doc.draw?.entities?.length)) {
+    if (saved?.doc && (saved.doc.features?.length || saved.doc.draw?.entities?.length)) {
       try {
         store.load(saved.doc, { markClean: false });
-        const when = new Date(saved.at).toLocaleString();
-        toast(`Restored your last session (${when})`, 'ok', 5000);
+        this.flash(`Restored your last session from ${new Date(saved.at).toLocaleString()}`, 'ok', 5000);
         return;
       } catch (e) { console.warn('restore failed', e); }
     }
-    store.load(this.sampleDocument());
+    store.load(TEMPLATES.find(t => t.id === 'plate').build());
     let seen = false;
     try { seen = localStorage.getItem('tessercad.seenWelcome') === '1'; } catch { /* ignore */ }
     if (!seen) {
       setTimeout(() => {
         this.showWelcome();
         try { localStorage.setItem('tessercad.seenWelcome', '1'); } catch { /* ignore */ }
-      }, 600);
+      }, 550);
     }
   }
 
-  sampleDocument() {
-    const doc = newDocument('Demo bracket');
-    doc.params = [
-      { id: uid('p'), name: 'plate_w', value: 120, note: 'Plate width' },
-      { id: uid('p'), name: 'plate_d', value: 70, note: 'Plate depth' },
-      { id: uid('p'), name: 'thick', value: 10, note: 'Plate thickness' },
-      { id: uid('p'), name: 'bore', value: 9, note: 'Bolt hole radius' },
-    ];
-    const plate = makeFeature('plate', {
-      name: 'Base plate', material: 'aluminium',
-      params: { w: 'plate_w', d: 'plate_d', h: 'thick', fillet: 12, hole: 0, seg: 10 },
-      pos: [0, 0, 'thick/2'],
+  newDocument() {
+    this.guardUnsaved('Start a new document?', () => {
+      clearLocal();
+      store.load(newDocument('Untitled'));
+      this.selection.clear();
+      this.vp.frameAll();
     });
-    const boss = makeFeature('cylinder', {
-      name: 'Boss', material: 'aluminium',
-      params: { r: 22, h: 34, seg: 48, arc: 360 },
-      pos: [0, 0, 'thick + 17'],
-    });
-    const bore = makeFeature('cylinder', {
-      name: 'Centre bore', material: 'steel',
-      params: { r: 12, h: 90, seg: 48, arc: 360 },
-      pos: [0, 0, 20],
-    });
-    const hole = makeFeature('cylinder', {
-      name: 'Bolt hole', material: 'steel',
-      params: { r: 'bore', h: 'thick*3', seg: 32, arc: 360 },
-      pos: ['plate_w/2 - 18', 'plate_d/2 - 16', 'thick/2'],
-    });
-    const holes = makeFeature('patternLinear', {
-      name: 'Bolt pattern',
-      params: { dx: '-(plate_w - 36)', dy: 0, dz: 0, count: 2, dx2: 0, dy2: '-(plate_d - 32)', dz2: 0, count2: 2 },
-      inputs: [hole.id],
-    });
-    const merged = makeFeature('boolean', { name: 'Bracket', params: { op: 'union' }, inputs: [plate.id, boss.id], material: 'aluminium' });
-    const cut = makeFeature('boolean', { name: 'Drilled bracket', params: { op: 'subtract' }, inputs: [merged.id, bore.id, holes.id], material: 'aluminium' });
-    doc.features = [plate, boss, bore, hole, holes, merged, cut];
-    doc.sim.duration = 8;
-    return doc;
   }
+
+  guardUnsaved(message, go) {
+    if (!store.dirty) { go(); return; }
+    confirmDialog('Unsaved changes', `${message} Anything not saved to a file will be lost.`, go, { danger: true, yes: 'Discard and continue' });
+  }
+
+  loadSample() {
+    this.guardUnsaved('Load the demo model?', () => {
+      store.load(TEMPLATES.find(t => t.id === 'flange').build());
+      this.vp.frameAll();
+    });
+  }
+
+  applyTemplate(t) {
+    this.guardUnsaved(`Start from “${t.name}”?`, () => {
+      store.load(t.build());
+      this.selection.clear();
+      setTimeout(() => this.vp.frameAll(), 80);
+      this.flash(`Started from ${t.name}`, 'ok');
+      closeModal();
+    });
+  }
+
+  showTemplates() {
+    modal({
+      title: 'New from template', icon: 'template', wide: true,
+      subtitle: 'Every template is a working parametric model — open one and change its parameters.',
+      body: [el('div', { class: 'card-grid' }, TEMPLATES.map(t => el('button', {
+        class: 'card', onclick: () => this.applyTemplate(t),
+      }, [icon(t.icon, { size: 22 }), el('b', { text: t.name }), el('span', { text: t.blurb })])))],
+      actions: [{ label: 'Cancel' }],
+    });
+  }
+
+  saveAs() {
+    promptDialog('Save as', 'File name', store.doc.meta.name, (v) => {
+      const name = String(v || '').trim();
+      if (!name) return;
+      store.quiet((d) => { d.meta.name = name; });
+      IO.saveProject();
+      this.refreshUI();
+    }, { help: `Saved as ${FILE_EXT} — plain JSON you can keep in git.` });
+  }
+
+  revert() {
+    confirmDialog('Revert', 'Undo every change back to the start of this session?', () => {
+      while (store.canUndo()) store.undo();
+    }, { danger: true, yes: 'Revert everything' });
+  }
+
+  clearAutosave() {
+    confirmDialog('Clear saved session', 'Remove the copy of this document kept in your browser? The document on screen is untouched.', () => {
+      clearLocal();
+      this.flash('Saved session cleared', 'ok');
+    }, { danger: true, yes: 'Clear' });
+  }
+
+  showAutosave() {
+    const saved = loadLocal();
+    if (!saved?.doc) { this.flash('No autosaved session found', 'warn'); return; }
+    const n = saved.doc.features?.length || 0;
+    confirmDialog('Recover autosave',
+      `Restore the session saved at ${new Date(saved.at).toLocaleString()} (${n} feature${n === 1 ? '' : 's'})? The current document will be replaced.`,
+      () => { store.load(saved.doc, { markClean: false }); this.vp.frameAll(); }, { yes: 'Restore' });
+  }
+
+  showDocProps() {
+    const d = store.doc;
+    const nameInput = el('input', { type: 'text', value: d.meta.name });
+    const author = el('input', { type: 'text', value: d.meta.author || '', placeholder: 'Optional' });
+    const notes = el('textarea', { rows: 4, placeholder: 'Revision notes, tolerances, finish…' });
+    notes.value = d.meta.notes || '';
+    const unitSel = select(d.meta.units, Object.keys(UNITS).map(u => [u, `${u} — ${{ mm: 'millimetres', cm: 'centimetres', m: 'metres', in: 'inches', ft: 'feet' }[u]}`]), () => {});
+    modal({
+      title: 'Document properties', icon: 'doc-props',
+      body: [
+        field('Name', nameInput),
+        field('Author', author),
+        field('Display units', unitSel, { hint: 'Geometry is always stored in millimetres; this only changes what you read and export.' }),
+        field('Notes', notes, { full: true }),
+        el('h3', { text: 'Statistics' }),
+        kv([
+          ['Features', String(d.features.length)],
+          ['Drawing objects', String(d.draw.entities.length)],
+          ['Parameters', String(d.params.length)],
+          ['Created', new Date(d.meta.created).toLocaleString()],
+          ['Modified', new Date(d.meta.modified).toLocaleString()],
+          ['Schema', `v${d.schema}`],
+        ]),
+      ],
+      actions: [
+        { label: 'Cancel' },
+        { label: 'Apply', primary: true, run: () => {
+          store.edit('Document properties', (doc) => {
+            doc.meta.name = nameInput.value.trim() || 'Untitled';
+            doc.meta.author = author.value;
+            doc.meta.notes = notes.value;
+            doc.meta.units = unitSel.value;
+          }, { rebuild: false });
+          this.refreshUI();
+        } },
+      ],
+    });
+  }
+
+  /* ============================================================ rebuild */
 
   onDocChanged() {
     clearTimeout(this._rebuildTimer);
@@ -153,19 +285,15 @@ class App {
 
   rebuildNow() {
     const t0 = performance.now();
-    try {
-      this.build = rebuild(store.doc);
-    } catch (err) {
-      console.error(err);
-      toast(`Rebuild failed: ${err.message}`, 'err', 6000);
-      return;
-    }
+    try { this.build = rebuild(store.doc); }
+    catch (err) { console.error(err); this.flash(`Rebuild failed: ${err.message}`, 'err', 6000); return; }
     this.buildMs = performance.now() - t0;
     this.vp.syncBodies(this.build);
     this.sim.refreshPivots();
     this.sim.bakeKey = '';
     if (this.workspace === 'sim') this.sim.seek(this.sim.time); else this.sim.reset();
     this.applyView();
+    this.applyIsolation();
     this.refreshUI();
     this.timeline.render();
   }
@@ -174,6 +302,7 @@ class App {
     if (hard) { invalidateCache(); this.rebuildNow(); return; }
     this.vp.syncBodies(this.build || rebuild(store.doc));
     this.vp.refreshMaterials();
+    this.applyIsolation();
     this.refreshUI();
   }
 
@@ -186,38 +315,25 @@ class App {
   refreshUI() {
     renderLeftPanel(this);
     renderRightPanel(this);
+    this.refreshRibbon();
     this.updateStatus();
-    $('#btnUndo').disabled = !store.canUndo();
-    $('#btnRedo').disabled = !store.canRedo();
-    $('#docDirty').classList.toggle('on', store.dirty);
+    this.updateTopActions();
     const name = $('#docName');
-    if (document.activeElement !== name) name.value = store.doc.meta.name;
-    this.updateToolbarState();
+    if (name && document.activeElement !== name) name.value = store.doc.meta.name;
+    $('#docDirty')?.classList.toggle('on', store.dirty);
+    this.renderLearn();
   }
 
-  markSaved() { $('#docDirty').classList.remove('on'); }
+  markSaved() { $('#docDirty')?.classList.remove('on'); }
 
-  updateStatus() {
-    const s = this.build?.stats;
-    const u = store.doc.meta.units;
-    $('#statusUnits').textContent = `units: ${u}`;
-    if (this.workspace === 'draft') {
-      $('#statusStats').textContent = `${store.doc.draw.entities.length} objects · ${store.doc.draw.layers.length} layers`;
-    } else if (s) {
-      $('#statusStats').textContent = `${s.bodies} bodies · ${s.tris.toLocaleString()} tris · ${fmt(s.mass, 3)} kg · rebuild ${Math.round(this.buildMs || 0)} ms`;
-    }
-  }
+  flash(msg, kind = 'info', ms = 3200) { toast(msg, kind, ms); }
 
-  draftStatus({ coords, prompt, snap }) {
-    $('#statusCoords').textContent = coords;
-    if (this.workspace === 'draft') status(prompt ? `${prompt}${snap ? `  ·  snap: ${snap}` : ''}` : 'Ready');
-  }
-
-  /* ------------------------------------------------------- workspaces */
+  /* ========================================================= workspaces */
 
   setWorkspace(ws) {
+    if (this.ops.running) this.ops.cancel();
     this.workspace = ws;
-    for (const b of document.querySelectorAll('.ws')) b.setAttribute('aria-selected', String(b.dataset.ws === ws));
+    for (const b of $$('.ws')) b.setAttribute('aria-selected', String(b.dataset.ws === ws));
     const is3d = ws !== 'draft';
     $('#viewport3d').style.display = is3d ? '' : 'none';
     $('#viewport2d').hidden = is3d;
@@ -229,10 +345,10 @@ class App {
     if (ws === 'sim') { this.sim.refreshPivots(); this.sim.seek(this.sim.time); this.timeline.render(); }
     else { this.sim.pause(); this.sim.reset(); }
     this.vp.setGizmoMode(ws === 'model' ? this.gizmoMode : null);
-    this.buildToolbar();
+    this.buildRibbon();
     this.refreshUI();
     bus.emit(T.WORKSPACE, ws);
-    status(WS_HINTS[ws]);
+    status(WS_META[ws].hint);
   }
 
   setTimelineVisible(v) {
@@ -241,7 +357,7 @@ class App {
     setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 40);
   }
 
-  /* -------------------------------------------------------- selection */
+  /* ========================================================== selection */
 
   select(ids, additive = false) {
     if (this.workspace === 'draft') {
@@ -258,19 +374,55 @@ class App {
     }
     this.vp.setSelection([...this.selection]);
     bus.emit(T.SELECTION, { source: 'model', ids: [...this.selection] });
+    if (ids.length) this.markLearn('select');
     this.refreshUI();
     this.timeline.render();
   }
 
+  selectAll() {
+    if (this.workspace === 'draft') this.draft.selectAll();
+    else this.select(store.doc.features.filter(f => !store.consumedIds().has(f.id) && !f.suppressed).map(f => f.id));
+    this.refreshUI();
+  }
+
+  invertSelection() {
+    if (this.workspace === 'draft') {
+      const all = store.doc.draw.entities.map(e => e.id);
+      const cur = this.draft.selection;
+      this.draft.selection = new Set(all.filter(id => !cur.has(id)));
+      this.draft.invalidate();
+    } else {
+      const all = store.doc.features.filter(f => !store.consumedIds().has(f.id)).map(f => f.id);
+      this.select(all.filter(id => !this.selection.has(id)));
+    }
+    this.refreshUI();
+  }
+
+  selectSameType() {
+    const f = this.selected()[0];
+    if (!f) return;
+    this.select(store.doc.features.filter(x => x.type === f.type && !store.consumedIds().has(x.id)).map(x => x.id));
+  }
+
   selected() { return [...this.selection].map(id => store.feature(id)).filter(Boolean); }
 
-  /* --------------------------------------------------- feature editing */
+  renameSelected() {
+    const f = this.selected()[0];
+    if (!f) return;
+    promptDialog('Rename feature', 'Name', f.name, (v) => {
+      const name = String(v || '').trim();
+      if (!name) return;
+      store.edit('Rename feature', () => { store.feature(f.id).name = name; }, { rebuild: false });
+      this.refreshUI();
+    });
+  }
+
+  /* ===================================================== feature editing */
 
   addFeature(type, extra = {}) {
     const cat = catalogOf(type);
     const f = makeFeature(type, extra);
     f.name = store.uniqueName(cat.label);
-    // sit new solids on the ground plane
     if (cat.group === 'solid' && !extra.pos) {
       const h = f.params.h ?? f.params.pitch ?? 0;
       const r = f.params.r ?? f.params.R ?? f.params.ro ?? 0;
@@ -278,13 +430,14 @@ class App {
     }
     store.edit(`Add ${cat.label}`, (doc) => { doc.features.push(f); });
     this.select([f.id]);
-    toast(`${f.name} added`, 'ok', 1800);
+    this.markLearn('create');
+    this.flash(`${f.name} added`, 'ok', 1600);
     return f;
   }
 
   addBoolean(op) {
     const ids = [...this.selection];
-    if (ids.length < 2) { toast('Select two or more bodies first', 'warn'); return; }
+    if (ids.length < 2) { this.flash('Select two or more bodies first', 'warn'); return; }
     const ordered = store.doc.features.filter(f => ids.includes(f.id)).map(f => f.id);
     const first = store.feature(ordered[0]);
     const f = makeFeature('boolean', { params: { op }, inputs: ordered, material: first?.material });
@@ -295,11 +448,16 @@ class App {
       doc.features.splice(last + 1, 0, f);
     });
     this.select([f.id]);
+    this.markLearn('boolean');
+    setTimeout(() => {
+      const r = this.build?.results.get(f.id);
+      if (r?.error) this.flash(r.error, 'err', 6000);
+    }, 60);
   }
 
   addModifier(type) {
     const ids = [...this.selection];
-    if (ids.length !== 1) { toast('Select exactly one body', 'warn'); return; }
+    if (ids.length !== 1) { this.flash('Select exactly one body', 'warn'); return; }
     const src = store.feature(ids[0]);
     const f = makeFeature(type, { inputs: [src.id], material: src.material });
     f.name = store.uniqueName(catalogOf(type).label);
@@ -315,14 +473,19 @@ class App {
     if (this.workspace === 'draft') { this.draft.deleteSelection(); this.refreshUI(); return; }
     const ids = new Set(this.selection);
     if (!ids.size) return;
-    store.edit('Delete features', (doc) => {
-      doc.features = doc.features.filter(f => !ids.has(f.id));
-      for (const f of doc.features) f.inputs = f.inputs.filter(i => !ids.has(i));
-      for (const id of ids) { delete doc.sim.tracks[id]; delete doc.sim.schedule.items[id]; delete doc.sim.dynamics.bodies[id]; }
-    });
-    this.selection.clear();
-    this.vp.setSelection([]);
-    this.refreshUI();
+    const go = () => {
+      store.edit('Delete features', (doc) => {
+        doc.features = doc.features.filter(f => !ids.has(f.id));
+        for (const f of doc.features) f.inputs = f.inputs.filter(i => !ids.has(i));
+        for (const id of ids) { delete doc.sim.tracks[id]; delete doc.sim.schedule.items[id]; delete doc.sim.dynamics.bodies[id]; }
+      });
+      this.selection.clear();
+      this.vp.setSelection([]);
+      this.refreshUI();
+    };
+    if (this.prefs.confirmDelete) {
+      confirmDialog('Delete', `Delete ${ids.size} feature${ids.size === 1 ? '' : 's'}?`, go, { danger: true, yes: 'Delete' });
+    } else go();
   }
 
   duplicateSelection() {
@@ -337,8 +500,7 @@ class App {
         const copy = structuredClone(src);
         copy.id = uid();
         copy.name = store.uniqueName(`${src.name} copy`);
-        copy.inputs = [];       // a copy is a standalone body
-        copy.transform.pos = copy.transform.pos.map(v => (typeof v === 'number' ? v : v));
+        copy.inputs = [];
         doc.features.push(copy);
         added.push(copy.id);
       }
@@ -356,37 +518,97 @@ class App {
     });
   }
 
-  dropToFloor(id) {
-    const res = this.build?.results.get(id);
-    if (!res || !res.instances.length) return;
-    let minZ = Infinity;
-    for (const inst of res.instances) {
-      const mp = massProperties(inst.geometry, inst.matrix);
-      minZ = Math.min(minZ, mp.box.min.z);
+  toggleSuppress() {
+    const ids = [...this.selection];
+    if (!ids.length) return;
+    const any = ids.some(id => !store.feature(id)?.suppressed);
+    store.edit('Suppress', () => { for (const id of ids) { const f = store.feature(id); if (f) f.suppressed = any; } });
+  }
+
+  setVisible(visible, { all = false } = {}) {
+    const ids = all ? store.doc.features.map(f => f.id) : [...this.selection];
+    if (!ids.length) return;
+    store.edit(visible ? 'Show' : 'Hide', () => { for (const id of ids) { const f = store.feature(id); if (f) f.visible = visible; } }, { rebuild: false });
+    if (all) this.isolated = null;
+    this.refreshBodies();
+  }
+
+  isolate() {
+    if (this.isolated) { this.isolated = null; this.flash('Isolation off', 'info', 1400); }
+    else {
+      if (!this.selection.size) return;
+      this.isolated = new Set(this.selection);
+      this.flash(`Isolated ${this.isolated.size} bod${this.isolated.size === 1 ? 'y' : 'ies'} — press / to exit`, 'ok');
     }
-    if (!Number.isFinite(minZ)) return;
-    const scope = this.build.scope;
-    store.edit('Drop to floor', () => {
+    this.applyIsolation();
+    this.refreshUI();
+  }
+
+  applyIsolation() {
+    for (const [id, group] of this.vp.bodies) {
       const f = store.feature(id);
-      f.transform.pos[2] = evalSafe(f.transform.pos[2], scope, 0) - minZ;
+      const base = f ? f.visible !== false : true;
+      group.visible = this.isolated ? (base && this.isolated.has(id)) : base;
+    }
+    this.vp.invalidate();
+  }
+
+  setMaterial(key) {
+    const ids = [...this.selection];
+    if (!ids.length) { this.flash('Select a body first', 'warn'); return; }
+    const m = MATERIALS[key];
+    store.edit('Assign material', () => {
+      for (const id of ids) {
+        const f = store.feature(id);
+        if (!f) continue;
+        f.material = key;
+        f.appearance.color = m.color;
+        f.appearance.metalness = m.metal;
+        f.appearance.roughness = m.rough;
+      }
+    }, { rebuild: false });
+    this.refreshBodies();
+    this.flash(`${m.name} applied to ${ids.length} bod${ids.length === 1 ? 'y' : 'ies'}`, 'ok', 1800);
+  }
+
+  showMaterialPicker() {
+    modal({
+      title: 'Assign material', icon: 'palette', wide: true,
+      subtitle: 'Material sets the appearance and the density used for mass properties.',
+      body: [el('div', { class: 'card-grid' }, Object.entries(MATERIALS).map(([k, m]) => el('button', {
+        class: 'card', onclick: () => { this.setMaterial(k); closeModal(); },
+      }, [
+        el('span', { style: { width: '22px', height: '22px', borderRadius: '5px', background: m.color, border: '1px solid rgba(127,127,127,.4)' } }),
+        el('b', { text: m.name }),
+        el('span', { text: `${(m.density * 1e6).toFixed(0)} kg/m³` }),
+      ])))],
+      actions: [{ label: 'Cancel' }],
     });
   }
 
-  centreOnOrigin(id) {
-    const res = this.build?.results.get(id);
-    if (!res || !res.instances.length) return;
-    const mp = massProperties(res.instances[0].geometry, res.instances[0].matrix);
-    const c = new THREE.Vector3();
-    mp.box.getCenter(c);
-    const scope = this.build.scope;
-    store.edit('Centre on origin', () => {
-      const f = store.feature(id);
-      const p = f.transform.pos.map(v => evalSafe(v, scope, 0));
-      f.transform.pos = [p[0] - c.x, p[1] - c.y, p[2] - c.z];
+  pickColour() {
+    const ids = [...this.selection];
+    if (!ids.length) return;
+    const input = el('input', { type: 'color', value: store.feature(ids[0])?.appearance.color || '#4c9fff' });
+    input.addEventListener('change', () => {
+      store.edit('Set colour', () => { for (const id of ids) { const f = store.feature(id); if (f) f.appearance.color = input.value; } }, { rebuild: false });
+      this.refreshBodies();
     });
+    input.click();
   }
 
-  /* ------------------------------------------------------------ gizmo */
+  /* ========================================================== transforms */
+
+  startOperator(kind) {
+    if (this.workspace === 'draft') { this.flash('Transform operators work in the Model and Simulate workspaces', 'warn'); return; }
+    if (this.ops.start(kind)) this.markLearn('transform');
+  }
+
+  setGizmo(mode) {
+    this.gizmoMode = mode;
+    this.vp.setGizmoMode(this.workspace === 'model' ? mode : null);
+    this.refreshRibbon();
+  }
 
   previewGizmo() {
     const ids = [...this.selection];
@@ -395,9 +617,9 @@ class App {
     const group = this.vp.bodies.get(ids[0]);
     if (!group) return;
     const f = store.feature(ids[0]);
-    const cur = { pos: f.transform.pos.map(v => evalSafe(v, this.build.scope, 0)) };
+    const cur = f.transform.pos.map(v => evalSafe(v, this.build.scope, 0));
     group.matrixAutoUpdate = false;
-    group.matrix.makeTranslation(g.pos[0] - cur.pos[0], g.pos[1] - cur.pos[1], g.pos[2] - cur.pos[2]);
+    group.matrix.makeTranslation(g.pos[0] - cur[0], g.pos[1] - cur[1], g.pos[2] - cur[2]);
     group.updateMatrixWorld(true);
     this.vp.invalidate();
   }
@@ -415,24 +637,133 @@ class App {
     });
   }
 
-  setGizmo(mode) {
-    this.gizmoMode = mode;
-    this.vp.setGizmoMode(this.workspace === 'model' ? mode : null);
-    this.buildToolbar();
+  resetTransform() {
+    const ids = [...this.selection];
+    if (!ids.length) return;
+    store.edit('Reset transform', () => {
+      for (const id of ids) {
+        const f = store.feature(id);
+        if (!f) continue;
+        f.transform.pos = [0, 0, 0]; f.transform.rot = [0, 0, 0]; f.transform.scale = [1, 1, 1];
+      }
+    });
   }
 
-  /* ----------------------------------------------------- draft bridging */
+  dropSelection() {
+    const ids = [...this.selection];
+    if (!ids.length) return;
+    const scope = this.build.scope;
+    store.edit('Drop to floor', () => {
+      for (const id of ids) {
+        const res = this.build.results.get(id);
+        const f = store.feature(id);
+        if (!res || !f || !res.instances.length) continue;
+        let minZ = Infinity;
+        for (const inst of res.instances) minZ = Math.min(minZ, massProperties(inst.geometry, inst.matrix).box.min.z);
+        if (Number.isFinite(minZ)) f.transform.pos[2] = evalSafe(f.transform.pos[2], scope, 0) - minZ;
+      }
+    });
+  }
+
+  centreSelection() {
+    const ids = [...this.selection];
+    if (!ids.length) return;
+    const scope = this.build.scope;
+    store.edit('Centre on origin', () => {
+      for (const id of ids) {
+        const res = this.build.results.get(id);
+        const f = store.feature(id);
+        if (!res || !f || !res.instances.length) continue;
+        const c = new THREE.Vector3();
+        massProperties(res.instances[0].geometry, res.instances[0].matrix).box.getCenter(c);
+        const p = f.transform.pos.map(v => evalSafe(v, scope, 0));
+        f.transform.pos = [p[0] - c.x, p[1] - c.y, p[2] - c.z];
+      }
+    });
+  }
+
+  _bodyCentres() {
+    const out = [];
+    for (const id of this.selection) {
+      const res = this.build?.results.get(id);
+      if (!res || !res.instances.length) continue;
+      const c = new THREE.Vector3();
+      massProperties(res.instances[0].geometry, res.instances[0].matrix).box.getCenter(c);
+      out.push({ id, c });
+    }
+    return out;
+  }
+
+  alignSelection(axis) {
+    const list = this._bodyCentres();
+    if (list.length < 2) return;
+    const i = { x: 0, y: 1, z: 2 }[axis];
+    const target = list.reduce((s, b) => s + b.c.getComponent(i), 0) / list.length;
+    const scope = this.build.scope;
+    store.edit(`Align on ${axis.toUpperCase()}`, () => {
+      for (const b of list) {
+        const f = store.feature(b.id);
+        if (!f) continue;
+        f.transform.pos[i] = evalSafe(f.transform.pos[i], scope, 0) + (target - b.c.getComponent(i));
+      }
+    });
+    this.flash(`Aligned ${list.length} bodies on ${axis.toUpperCase()}`, 'ok', 1800);
+  }
+
+  distributeSelection() {
+    const list = this._bodyCentres();
+    if (list.length < 3) return;
+    // spread along whichever axis the selection already spans most
+    const span = ['x', 'y', 'z'].map((a, i) => {
+      const vals = list.map(b => b.c.getComponent(i));
+      return { a, i, d: Math.max(...vals) - Math.min(...vals) };
+    }).sort((p, q) => q.d - p.d)[0];
+    const sorted = [...list].sort((p, q) => p.c.getComponent(span.i) - q.c.getComponent(span.i));
+    const lo = sorted[0].c.getComponent(span.i);
+    const hi = sorted[sorted.length - 1].c.getComponent(span.i);
+    const step = (hi - lo) / (sorted.length - 1);
+    const scope = this.build.scope;
+    store.edit('Distribute evenly', () => {
+      sorted.forEach((b, k) => {
+        const f = store.feature(b.id);
+        if (!f) return;
+        const want = lo + step * k;
+        f.transform.pos[span.i] = evalSafe(f.transform.pos[span.i], scope, 0) + (want - b.c.getComponent(span.i));
+      });
+    });
+    this.flash(`Distributed along ${span.a.toUpperCase()}`, 'ok', 1800);
+  }
+
+  /* ============================================================== draft */
+
+  setDraftTool(id) {
+    if (this.workspace !== 'draft') this.setWorkspace('draft');
+    this.draft.setTool(id);
+    this.refreshRibbon();
+    this.refreshUI();
+  }
+
+  toggleDraft(which) {
+    const d = this.draft;
+    if (which === 'snap') d.snap.on = !d.snap.on;
+    if (which === 'grid') d.snap.grid = !d.snap.grid;
+    if (which === 'ortho') { d.ortho = !d.ortho; if (d.ortho) d.polar = false; }
+    if (which === 'polar') { d.polar = !d.polar; if (d.polar) d.ortho = false; }
+    d.invalidate();
+    this.refreshRibbon();
+    this.refreshUI();
+  }
 
   linkProfile(featureId) {
     const ids = [...this.draft.selection];
-    if (!ids.length) { toast('Select geometry in the Draft workspace first', 'warn'); return; }
+    if (!ids.length) { this.flash('Select geometry in the Draft workspace first', 'warn'); return; }
     store.edit('Link sketch profile', () => { store.feature(featureId).profile = ids; });
-    toast(`${ids.length} object${ids.length > 1 ? 's' : ''} linked`, 'ok');
+    this.flash(`${ids.length} object${ids.length > 1 ? 's' : ''} linked`, 'ok');
   }
 
   showProfile(featureId) {
     const f = store.feature(featureId);
-    if (!f?.profile?.length) { toast('No profile linked', 'warn'); return; }
+    if (!f?.profile?.length) { this.flash('No profile linked', 'warn'); return; }
     this.setWorkspace('draft');
     this.draft.selection = new Set(f.profile);
     const boxes = f.profile.map(id => entityBBox(store.entity(id))).filter(Boolean);
@@ -449,16 +780,17 @@ class App {
 
   createFromProfile(kind) {
     const ids = [...this.draft.selection];
-    if (!ids.length) { toast('Select closed geometry first', 'warn'); return; }
+    if (!ids.length) { this.flash('Select closed geometry in the Draft workspace first', 'warn'); return; }
     const f = makeFeature(kind, { material: 'abs' });
     f.profile = ids;
     f.name = store.uniqueName(kind === 'extrude' ? 'Extrusion' : 'Revolution');
     store.edit(`Create ${kind}`, (doc) => { doc.features.push(f); });
     this.setWorkspace('model');
     this.select([f.id]);
+    this.markLearn('extrude');
     setTimeout(() => {
       const res = this.build?.results.get(f.id);
-      if (res?.error) toast(res.error, 'err', 6000);
+      if (res?.error) this.flash(res.error, 'err', 6000);
       else this.vp.frameAll();
     }, 60);
   }
@@ -475,7 +807,7 @@ class App {
 
   deleteLayer(id) {
     const draw = store.doc.draw;
-    if (draw.layers.length <= 1) { toast('The last layer cannot be deleted', 'warn'); return; }
+    if (draw.layers.length <= 1) { this.flash('The last layer cannot be deleted', 'warn'); return; }
     const n = draw.entities.filter(e => e.layer === id).length;
     const go = () => {
       store.edit('Delete layer', (d) => {
@@ -487,6 +819,14 @@ class App {
     };
     if (n) confirmDialog('Delete layer', `This removes the layer and its ${n} object${n > 1 ? 's' : ''}.`, go, { danger: true, yes: 'Delete' });
     else go();
+  }
+
+  draftSelectionCentre() {
+    const boxes = [...this.draft.selection].map(id => entityBBox(store.entity(id))).filter(Boolean);
+    if (!boxes.length) return [0, 0];
+    const x1 = Math.min(...boxes.map(b => b[0])), y1 = Math.min(...boxes.map(b => b[1]));
+    const x2 = Math.max(...boxes.map(b => b[2])), y2 = Math.max(...boxes.map(b => b[3]));
+    return [(x1 + x2) / 2, (y1 + y2) / 2];
   }
 
   rotateDraftSelection(deg) {
@@ -507,226 +847,72 @@ class App {
     this.refreshUI();
   }
 
-  draftSelectionCentre() {
-    const boxes = [...this.draft.selection].map(id => entityBBox(store.entity(id))).filter(Boolean);
-    if (!boxes.length) return [0, 0];
-    const x1 = Math.min(...boxes.map(b => b[0])), y1 = Math.min(...boxes.map(b => b[1]));
-    const x2 = Math.max(...boxes.map(b => b[2])), y2 = Math.max(...boxes.map(b => b[3]));
-    return [(x1 + x2) / 2, (y1 + y2) / 2];
+  /* ========================================================== simulate */
+
+  togglePlay() { if (this.workspace !== 'sim') this.setWorkspace('sim'); this.sim.toggle(); this.markLearn('play'); }
+  toggleLoop() { store.quiet((d) => { d.sim.loop = !d.sim.loop; }); this.timeline.render(); this.refreshRibbon(); }
+
+  toggleSchedule() {
+    store.edit('Build sequencing', (d) => { d.sim.schedule.enabled = !d.sim.schedule.enabled; }, { rebuild: false });
+    this.refreshSim(); this.refreshUI();
   }
 
-  /* ---------------------------------------------------------- 4D tools */
+  togglePhysics() {
+    store.edit('Dynamics', (d) => { d.sim.dynamics.enabled = !d.sim.dynamics.enabled; }, { rebuild: false });
+    this.sim.bakeKey = '';
+    this.refreshSim(); this.refreshUI();
+  }
+
+  keyPose() {
+    const ids = [...this.selection];
+    if (ids.length !== 1) { this.flash('Select one body first', 'warn'); return; }
+    this.sim.keyCurrentPose(ids[0]);
+    this.refreshSim(); this.refreshUI();
+    this.flash('Pose keyed at the playhead', 'ok', 1600);
+  }
+
+  clearKeys() {
+    const ids = [...this.selection];
+    if (ids.length !== 1) return;
+    this.sim.clearTracks(ids[0]);
+    this.refreshSim(); this.refreshUI();
+  }
 
   autoSchedule() {
     const n = this.sim.autoSchedule({ perItem: 1, gap: 0.3, mode: 'grow' });
     this.setWorkspace('sim');
-    this.refreshSim();
-    this.refreshUI();
-    toast(`Sequenced ${n} bodies across the timeline`, 'ok');
+    this.refreshSim(); this.refreshUI();
+    this.markLearn('sequence');
+    this.flash(`Sequenced ${n} bodies across the timeline`, 'ok');
+  }
+
+  clearSchedule() {
+    store.edit('Clear build sequence', (d) => { d.sim.schedule.items = {}; d.sim.schedule.enabled = false; }, { rebuild: false });
+    this.refreshSim(); this.refreshUI();
+  }
+
+  addMotor() {
+    const id = [...this.selection][0];
+    if (!id) return;
+    store.edit('Add motor', (d) => {
+      const cur = d.sim.dynamics.bodies[id] || { mass: 1, static: true, vel: [0, 0, 0], spin: [0, 0, 0], bounce: 0.35, friction: 0.4, enabled: true };
+      d.sim.dynamics.bodies[id] = { ...cur, static: true, motor: { type: 'spin', axis: 'z', rate: 90, amp: 30, freq: 0.5, phase: 0 } };
+      d.sim.dynamics.enabled = true;
+    }, { rebuild: false });
+    this.setWorkspace('sim');
+    this.sim.bakeKey = '';
+    this.refreshSim(); this.refreshUI();
+    this.flash('Spin motor added — tune it in the Dynamics panel', 'ok');
   }
 
   bakeDynamics() {
     const n = this.sim.bakeToKeys(3);
-    if (n) { this.refreshSim(); this.refreshUI(); toast(`Baked ${n} keyframes`, 'ok'); }
-  }
-
-  async recordVideo() {
-    if (!recordingSupported()) { toast('This browser cannot record canvas video', 'err'); return; }
-    this.setWorkspace('sim');
-    const body = modal({
-      title: 'Recording the timeline',
-      body: [
-        el('p', { text: 'Rendering every frame and encoding with the browser’s video encoder. Keep this tab in the foreground.' }),
-        el('div', { class: 'row wide' }, [el('progress', { id: 'recProg', max: '1', value: '0', style: { width: '100%' } })]),
-      ],
-    });
-    const prog = body.querySelector('#recProg');
-    try {
-      await recordTimeline(this.vp, this.sim, { fps: store.doc.sim.fps || 30, onProgress: (p) => { prog.value = p; } });
-      closeModal();
-    } catch (e) {
-      closeModal();
-      toast(`Recording failed: ${e.message}`, 'err', 6000);
-    }
-  }
-
-  showMeasure(r) {
-    if (!r) return;
-    const u = store.doc.meta.units;
-    if (r.kind === 'distance') {
-      $('#hud').textContent = `distance ${fmt(toDisplay(r.value, u))} ${u}\nΔ ${fmt(toDisplay(r.delta.x, u))}, ${fmt(toDisplay(r.delta.y, u))}, ${fmt(toDisplay(r.delta.z, u))}`;
-      toast(`Distance ${fmt(toDisplay(r.value, u))} ${u}`, 'ok', 6000);
-    } else if (r.kind === 'angle') {
-      $('#hud').textContent = `angle ${fmt(r.value)}°`;
-      toast(`Angle ${fmt(r.value)}°`, 'ok', 6000);
-    } else if (r.kind === 'point') {
-      $('#hud').textContent = `point ${fmt(toDisplay(r.point.x, u))}, ${fmt(toDisplay(r.point.y, u))}, ${fmt(toDisplay(r.point.z, u))}`;
-    }
-  }
-
-  /* -------------------------------------------------------------- view */
-
-  applyView() {
-    const v = store.doc.view;
-    this.vp.setGrid(v.grid);
-    this.vp.setAxes(v.axes);
-    this.vp.setGround(v.ground);
-    this.vp.setBackground(v.bg);
-    this.vp.setOrtho(v.ortho);
-    this.vp.setClipping(v.clip);
-    this.draft.invalidate();
-  }
-
-  /* ==================================================================
-     Commands
-     ================================================================== */
-
-  buildCommands() {
-    const C = [];
-    const add = (id, label, glyph, group, run, opts = {}) => C.push({ id, label, glyph, group, run, ...opts });
-
-    /* file */
-    add('file.new', 'New document', '✧', 'File', () => {
-      confirmDialog('New document', 'Discard the current model and start over?', () => {
-        clearLocal();
-        store.load(newDocument('Untitled'));
-        this.selection.clear();
-        this.vp.frameAll();
-      }, { danger: true, yes: 'New document' });
-    }, { key: 'Ctrl+N' });
-    add('file.save', 'Save project', '⤓', 'File', () => IO.saveProject(), { key: 'Ctrl+S' });
-    add('file.open', 'Open project…', '⤒', 'File', () => this.pickFile('.tcad,.json'), { key: 'Ctrl+O' });
-    add('file.import', 'Import STL / OBJ / DXF…', '⇩', 'File', () => this.pickFile(IO.IMPORT_ACCEPT));
-    add('file.sample', 'Load the demo model', '★', 'File', () => {
-      confirmDialog('Load demo', 'Replace the current document with the demo bracket?', () => {
-        store.load(this.sampleDocument());
-        this.vp.frameAll();
-      });
-    });
-
-    /* export */
-    add('export.stl', 'Export STL (binary)', '⬢', 'Export', () => IO.exportSTL(this.vp, { binary: true }));
-    add('export.stlAscii', 'Export STL (ASCII)', '⬡', 'Export', () => IO.exportSTL(this.vp, { binary: false }));
-    add('export.obj', 'Export OBJ', '◈', 'Export', () => IO.exportOBJ(this.vp));
-    add('export.glb', 'Export glTF (.glb)', '◆', 'Export', () => IO.exportGLTF(this.vp, { binary: true }));
-    add('export.ply', 'Export PLY', '◇', 'Export', () => IO.exportPLY(this.vp));
-    add('export.dxf', 'Export drawing as DXF', '▤', 'Export', () => IO.exportDXF());
-    add('export.svg', 'Export drawing as SVG', '▥', 'Export', () => IO.exportSVG());
-    add('export.png', 'Export viewport PNG', '▣', 'Export', () => IO.exportPNG(this.vp, 2));
-    add('export.bom', 'Export bill of materials (CSV)', '▦', 'Export', () => this.exportBOM());
-
-    /* edit */
-    add('edit.undo', 'Undo', '↶', 'Edit', () => store.undo(), { key: 'Ctrl+Z' });
-    add('edit.redo', 'Redo', '↷', 'Edit', () => store.redo(), { key: 'Ctrl+Shift+Z' });
-    add('edit.delete', 'Delete selection', '✕', 'Edit', () => this.deleteSelection(), { key: 'Del' });
-    add('edit.duplicate', 'Duplicate selection', '⧉', 'Edit', () => this.duplicateSelection(), { key: 'Ctrl+D' });
-    add('edit.selectAll', 'Select all', '▤', 'Edit', () => {
-      if (this.workspace === 'draft') this.draft.selectAll();
-      else this.select(store.doc.features.filter(f => !store.consumedIds().has(f.id)).map(f => f.id));
-      this.refreshUI();
-    }, { key: 'Ctrl+A' });
-
-    /* solids */
-    for (const [type, cat] of Object.entries(CATALOG)) {
-      if (cat.group !== 'solid') continue;
-      add(`add.${type}`, `Add ${cat.label.toLowerCase()}`, cat.glyph, 'Solids', () => this.addFeature(type));
-    }
-
-    /* combine */
-    add('bool.union', 'Union selected', '⊕', 'Combine', () => this.addBoolean('union'));
-    add('bool.subtract', 'Subtract selected', '⊖', 'Combine', () => this.addBoolean('subtract'));
-    add('bool.intersect', 'Intersect selected', '⊗', 'Combine', () => this.addBoolean('intersect'));
-    add('mod.linear', 'Linear pattern', '⋯', 'Combine', () => this.addModifier('patternLinear'));
-    add('mod.circular', 'Circular pattern', '✳', 'Combine', () => this.addModifier('patternCircular'));
-    add('mod.mirror', 'Mirror', '⇄', 'Combine', () => this.addModifier('mirror'));
-
-    /* sketch */
-    add('sketch.extrude', 'Extrude the draft selection', '⇧', 'Sketch', () => this.createFromProfile('extrude'));
-    add('sketch.revolve', 'Revolve the draft selection', '⟳', 'Sketch', () => this.createFromProfile('revolve'));
-
-    /* transform tools */
-    add('gizmo.translate', 'Move tool', '✛', 'Transform', () => this.setGizmo('translate'), { key: 'G' });
-    add('gizmo.rotate', 'Rotate tool', '⟲', 'Transform', () => this.setGizmo('rotate'), { key: 'R' });
-    add('gizmo.scale', 'Scale tool', '⤢', 'Transform', () => this.setGizmo('scale'), { key: 'T' });
-    add('gizmo.off', 'No gizmo', '⊘', 'Transform', () => this.setGizmo(null));
-
-    /* view */
-    add('view.fit', 'Zoom to fit', '⤢', 'View', () => (this.workspace === 'draft' ? this.draft.zoomExtents() : this.vp.frameAll()), { key: 'F' });
-    add('view.selection', 'Zoom to selection', '⊙', 'View', () => this.vp.frameSelection());
-    for (const [k, label] of [['iso', 'Isometric'], ['front', 'Front'], ['back', 'Back'], ['left', 'Left'], ['right', 'Right'], ['top', 'Top'], ['bottom', 'Bottom']]) {
-      add(`view.${k}`, `${label} view`, '▢', 'View', () => this.vp.standardView(k));
-    }
-    add('view.ortho', 'Toggle orthographic camera', '▱', 'View', () => {
-      store.edit('Camera', (d) => { d.view.ortho = !d.view.ortho; }, { rebuild: false });
-      this.applyView(); this.refreshUI();
-    }, { key: 'O' });
-    add('view.grid', 'Toggle grid', '▦', 'View', () => {
-      store.edit('Grid', (d) => { d.view.grid = !d.view.grid; }, { rebuild: false });
-      this.applyView(); this.refreshUI();
-    });
-    add('view.shading', 'Cycle shading mode', '◐', 'View', () => {
-      const modes = ['shaded-edges', 'shaded', 'wire', 'xray'];
-      const next = modes[(modes.indexOf(store.doc.view.shading) + 1) % modes.length];
-      store.edit('Shading', (d) => { d.view.shading = next; }, { rebuild: false });
-      this.refreshBodies(true);
-      toast(`Shading: ${next}`, 'info', 1400);
-    });
-    add('view.theme', 'Toggle light / dark theme', '◑', 'View', () => this.toggleTheme());
-
-    /* measure */
-    add('measure.distance', 'Measure distance', '⟺', 'Measure', () => this.vp.setMeasureMode('distance'));
-    add('measure.angle', 'Measure angle', '∠', 'Measure', () => this.vp.setMeasureMode('angle'));
-    add('measure.point', 'Probe a point', '⌖', 'Measure', () => this.vp.setMeasureMode('point'));
-    add('measure.off', 'Stop measuring', '⊘', 'Measure', () => { this.vp.setMeasureMode(null); $('#hud').textContent = ''; });
-
-    /* simulation */
-    add('sim.play', 'Play / pause the timeline', '▶', 'Simulate', () => { this.setWorkspace('sim'); this.sim.toggle(); }, { key: 'Space' });
-    add('sim.rewind', 'Rewind to the start', '⏮', 'Simulate', () => this.sim.seek(0));
-    add('sim.key', 'Key the current pose', '◆', 'Simulate', () => {
-      const ids = [...this.selection];
-      if (ids.length !== 1) { toast('Select one body first', 'warn'); return; }
-      this.sim.keyCurrentPose(ids[0]); this.refreshSim(); this.refreshUI();
-    });
-    add('sim.autoSchedule', 'Auto-sequence the build', '≡', 'Simulate', () => this.autoSchedule());
-    add('sim.bake', 'Bake dynamics to keyframes', '⚙', 'Simulate', () => this.bakeDynamics());
-    add('sim.record', 'Record the simulation to video', '●', 'Simulate', () => this.recordVideo());
-    add('sim.dropTest', 'Set up a drop test', '⤓', 'Simulate', () => this.setupDropTest());
-
-    /* help */
-    add('help.shortcuts', 'Keyboard shortcuts', '⌨', 'Help', () => this.showHelp());
-    add('help.about', 'About TesserCAD', 'ⓘ', 'Help', () => this.showWelcome());
-    add('help.palette', 'Command palette', '⌘', 'Help', () => this.openPalette(), { key: 'Ctrl+K' });
-
-    this.commands = C;
-    this.commandMap = new Map(C.map(c => [c.id, c]));
-  }
-
-  run(id) {
-    const c = this.commandMap.get(id);
-    if (!c) { console.warn('unknown command', id); return; }
-    c.run();
-  }
-
-  openPalette() {
-    commandPalette(this.commands, (c) => c.run());
-  }
-
-  exportBOM() {
-    if (!this.build) return;
-    const per = new Map();
-    for (const f of this.build.topLevel) {
-      const r = this.build.results.get(f.id);
-      if (!r || r.error) continue;
-      let volume = 0;
-      for (const inst of r.instances) volume += massProperties(inst.geometry, inst.matrix).volume;
-      per.set(f.id, { volume, mass: volume * (MATERIALS[f.material] || MATERIALS.steel).density });
-    }
-    IO.exportBOM({ ...this.build, perFeature: per });
+    if (n) { this.refreshSim(); this.refreshUI(); this.flash(`Baked ${n} keyframes`, 'ok'); }
   }
 
   setupDropTest() {
     const ids = [...this.vp.bodies.keys()];
-    if (!ids.length) { toast('Add a body first', 'warn'); return; }
+    if (!ids.length) { this.flash('Add a body first', 'warn'); return; }
     store.edit('Set up drop test', (d) => {
       d.sim.dynamics.enabled = true;
       d.sim.dynamics.ground = true;
@@ -744,141 +930,294 @@ class App {
     }, { rebuild: false });
     this.setWorkspace('sim');
     this.sim.bakeKey = '';
-    this.refreshSim();
-    this.refreshUI();
+    this.refreshSim(); this.refreshUI();
     this.sim.seek(0);
     this.sim.play();
-    toast('Drop test running — bodies fall onto the ground plane', 'ok', 4000);
+    this.flash('Drop test running — bodies fall onto the ground plane', 'ok', 4000);
   }
 
-  /* ==================================================================
-     Chrome: menus, toolbar, view cube
-     ================================================================== */
+  async recordVideo() {
+    if (!recordingSupported()) { this.flash('This browser cannot record canvas video', 'err'); return; }
+    this.setWorkspace('sim');
+    const body = modal({
+      title: 'Recording the timeline', icon: 'record',
+      subtitle: 'Rendering every frame and encoding with the browser’s own video encoder.',
+      body: [
+        el('p', { text: 'Keep this tab in the foreground until it finishes.' }),
+        el('div', { class: 'row wide' }, [el('progress', { id: 'recProg', max: '1', value: '0', style: { width: '100%' } })]),
+      ],
+    });
+    const prog = body.querySelector('#recProg');
+    try {
+      await recordTimeline(this.vp, this.sim, { fps: store.doc.sim.fps || 30, onProgress: (p) => { prog.value = p; } });
+      closeModal();
+    } catch (e) {
+      closeModal();
+      this.flash(`Recording failed: ${e.message}`, 'err', 6000);
+    }
+  }
+
+  /* ============================================================== view */
+
+  applyView() {
+    const v = store.doc.view;
+    this.vp.setGrid(v.grid);
+    this.vp.setAxes(v.axes);
+    this.vp.setGround(v.ground);
+    this.vp.setBackground(v.bg);
+    this.vp.setOrtho(v.ortho);
+    this.vp.setClipping(v.clip);
+    this.draft.invalidate();
+  }
+
+  toggleView(key) {
+    store.edit('View setting', (d) => { d.view[key] = !d.view[key]; }, { rebuild: false });
+    this.applyView();
+    this.refreshUI();
+  }
+
+  setShading(mode) {
+    store.edit('Shading', (d) => { d.view.shading = mode; }, { rebuild: false });
+    this.refreshBodies(true);
+  }
+
+  cycleShading() {
+    const modes = ['shaded-edges', 'shaded', 'wire', 'xray'];
+    const next = modes[(modes.indexOf(store.doc.view.shading) + 1) % modes.length];
+    this.setShading(next);
+    this.flash(`Shading: ${next.replace('-', ' with ')}`, 'info', 1300);
+  }
+
+  setBackground(bg) {
+    store.edit('Background', (d) => { d.view.bg = bg; }, { rebuild: false });
+    this.applyView();
+    this.refreshUI();
+  }
+
+  toggleSection() {
+    store.edit('Section', (d) => { d.view.clip.enabled = !d.view.clip.enabled; }, { rebuild: false });
+    this.applyView();
+    this.refreshUI();
+  }
+
+  zoomFit() { if (this.workspace === 'draft') this.draft.zoomExtents(); else this.vp.frameAll(); }
+
+  zoomBy(f) {
+    if (this.workspace === 'draft') { this.draft.zoomBy(f); return; }
+    const c = this.vp.controls;
+    const dir = new THREE.Vector3().subVectors(this.vp.camera.position, c.target).multiplyScalar(1 / f);
+    this.vp.camera.position.copy(c.target).add(dir);
+    c.update();
+    this.vp.invalidate();
+  }
+
+  toggleTheme() {
+    const next = this.prefs.theme === 'light' ? 'dark' : 'light';
+    this.prefs.theme = next;
+    this.savePrefs();
+    document.documentElement.setAttribute('data-theme', next);
+    this.applyView();
+    this.draft.invalidate();
+    this.timeline.drawRuler();
+    this.refreshUI();
+  }
+
+  toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else document.documentElement.requestFullscreen?.().catch(() => this.flash('Full screen was refused by the browser', 'warn'));
+  }
+
+  stopMeasuring() { this.vp.setMeasureMode(null); $('#hud').textContent = ''; this.refreshRibbon(); }
+
+  showMeasure(r) {
+    if (!r) return;
+    const u = store.doc.meta.units;
+    if (r.kind === 'distance') {
+      $('#hud').textContent = `distance  ${fmt(toDisplay(r.value, u))} ${u}\nΔ  ${fmt(toDisplay(r.delta.x, u))}, ${fmt(toDisplay(r.delta.y, u))}, ${fmt(toDisplay(r.delta.z, u))}`;
+      this.flash(`Distance ${fmt(toDisplay(r.value, u))} ${u}`, 'ok', 6000);
+    } else if (r.kind === 'angle') {
+      $('#hud').textContent = `angle  ${fmt(r.value)}°`;
+      this.flash(`Angle ${fmt(r.value)}°`, 'ok', 6000);
+    } else if (r.kind === 'point') {
+      $('#hud').textContent = `point  ${fmt(toDisplay(r.point.x, u))}, ${fmt(toDisplay(r.point.y, u))}, ${fmt(toDisplay(r.point.z, u))}`;
+    }
+    this.markLearn('measure');
+  }
+
+  /* ============================================================ panels */
+
+  isCollapsed(side) { return $('#workarea').classList.contains(`${side}-collapsed`); }
+
+  togglePanel(which) {
+    if (which === 'timeline') { this.setTimelineVisible($('#timeline').hidden); this.refreshUI(); return; }
+    $('#workarea').classList.toggle(`${which}-collapsed`);
+    setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
+    this.refreshUI();
+  }
+
+  zenMode() {
+    const w = $('#workarea');
+    const on = !(w.classList.contains('left-collapsed') && w.classList.contains('right-collapsed'));
+    w.classList.toggle('left-collapsed', on);
+    w.classList.toggle('right-collapsed', on);
+    if (on) this.setTimelineVisible(false);
+    setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
+    this.flash(on ? 'Zen mode — press Ctrl ⇧ Z to bring the panels back' : 'Panels restored', 'info', 2200);
+    this.refreshUI();
+  }
+
+  resetLayout() {
+    const w = $('#workarea');
+    w.classList.remove('left-collapsed', 'right-collapsed', 'mobile-left', 'mobile-right');
+    this.setTimelineVisible(this.workspace === 'sim');
+    setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
+    this.refreshUI();
+  }
+
+  /* ========================================================== chrome */
+
+  buildWorkspaceTabs() {
+    const host = clear($('#workspaces'));
+    for (const [id, meta] of Object.entries(WS_META)) {
+      host.appendChild(el('button', {
+        class: 'ws', role: 'tab', dataset: { ws: id },
+        'aria-selected': String(id === this.workspace),
+        title: `${meta.label} workspace`,
+        onclick: () => this.setWorkspace(id),
+      }, [icon(meta.icon, { size: 15 }), el('span', { class: 'ws-label', text: meta.label })]));
+    }
+  }
+
+  buildDocChip() {
+    const host = clear($('#docChip'));
+    const input = el('input', { id: 'docName', value: store.doc.meta.name, spellcheck: 'false', 'aria-label': 'Document name' });
+    input.addEventListener('change', () => store.quiet((d) => { d.meta.name = input.value || 'Untitled'; }));
+    host.append(icon('doc-props', { size: 14 }), input, el('span', { class: 'doc-dirty', id: 'docDirty', title: 'Unsaved changes' }));
+  }
+
+  buildTopActions() {
+    const host = clear($('#topActions'));
+    const btn = (id, ic, title) => {
+      const b = el('button', { class: 'icon-btn', title, 'aria-label': title, dataset: { cmd: id }, onclick: () => this.run(id) }, [icon(ic, { size: 16 })]);
+      host.appendChild(b);
+      return b;
+    };
+    btn('edit.undo', 'undo', 'Undo  (Ctrl Z)');
+    btn('edit.redo', 'redo', 'Redo  (Ctrl ⇧ Z)');
+    host.appendChild(el('span', { class: 'top-sep' }));
+    btn('file.save', 'file-save', 'Save project  (Ctrl S)');
+    btn('help.palette', 'command', 'Command palette  (Ctrl K)');
+    host.appendChild(el('span', { class: 'top-sep' }));
+    btn('view.theme', this.prefs.theme === 'light' ? 'sun' : 'moon', 'Light / dark theme');
+    btn('help.shortcuts', 'help', 'Help and shortcuts  (F1)');
+    this.updateTopActions();
+  }
+
+  updateTopActions() {
+    for (const b of $$('#topActions .icon-btn')) {
+      const c = this.commandMap.get(b.dataset.cmd);
+      if (c?.enabled) b.disabled = !c.enabled();
+    }
+  }
+
+  /** Resolve a command id into a menu item with live checked/enabled state. */
+  menuItem(id) {
+    const c = this.commandMap.get(id);
+    if (!c) return { label: id, disabled: true };
+    return {
+      label: c.label, icon: c.icon, key: c.key, danger: c.danger,
+      checked: c.checked ? c.checked() : false,
+      disabled: c.enabled ? !c.enabled() : false,
+      run: () => this.run(id),
+    };
+  }
 
   buildMenus() {
     const bar = clear($('#menubar'));
-    const menus = [
-      ['File', ['file.new', 'file.open', 'file.save', '-', 'file.import', '-', 'file.sample']],
-      ['Export', ['export.stl', 'export.stlAscii', 'export.obj', 'export.glb', 'export.ply', '-', 'export.dxf', 'export.svg', '-', 'export.png', 'export.bom']],
-      ['Edit', ['edit.undo', 'edit.redo', '-', 'edit.duplicate', 'edit.delete', 'edit.selectAll']],
-      ['View', ['view.fit', 'view.selection', '-', 'view.iso', 'view.front', 'view.top', 'view.right', '-', 'view.ortho', 'view.shading', 'view.grid', 'view.theme']],
-      ['Simulate', ['sim.play', 'sim.rewind', 'sim.key', '-', 'sim.autoSchedule', 'sim.dropTest', 'sim.bake', '-', 'sim.record']],
-      ['Help', ['help.palette', 'help.shortcuts', 'help.about']],
-    ];
-    for (const [label, ids] of menus) {
+    const defs = menuDefs(this, (id) => this.menuItem(id));
+    for (const [label, itemsFn] of defs) {
       const b = el('button', { text: label });
       b.addEventListener('click', () => {
         if (b.classList.contains('open')) { closeDropdown(); return; }
-        dropdown(b, ids.map(id => (id === '-' ? '-' : this.commandMap.get(id))).filter(Boolean));
+        dropdown(b, itemsFn().filter(Boolean));
+      });
+      b.addEventListener('pointerenter', () => {
+        if (isDropdownOpen() && !b.classList.contains('open')) dropdown(b, itemsFn().filter(Boolean));
       });
       bar.appendChild(b);
     }
   }
 
-  buildToolbar() {
-    const bar = clear($('#toolbar'));
-    const group = (label, items) => {
-      if (label) bar.appendChild(el('span', { class: 'tb-label', text: label }));
-      const g = el('div', { class: 'tb-group' });
-      for (const it of items) g.appendChild(it);
-      bar.appendChild(g);
-      bar.appendChild(el('span', { class: 'tb-sep' }));
-    };
-    const cmdBtn = (id, opts = {}) => {
-      const c = this.commandMap.get(id);
-      if (!c) return el('span');
-      return el('button', {
-        class: `tool ${opts.active ? 'toggled' : ''}`,
-        title: `${c.label}${c.key ? `  (${c.key})` : ''}`,
-        dataset: { cmd: id },
-        onclick: () => c.run(),
-      }, [el('span', { class: 'gl', text: c.glyph }), el('span', { class: 'tx', text: opts.short || c.label })]);
-    };
-
-    if (this.workspace === 'model') {
-      group('Solids', Object.entries(CATALOG)
-        .filter(([, c]) => c.group === 'solid')
-        .map(([t, c]) => cmdBtn(`add.${t}`, { short: c.label.split(' ')[0] })));
-      group('Combine', [
-        cmdBtn('bool.union', { short: 'Union' }),
-        cmdBtn('bool.subtract', { short: 'Subtract' }),
-        cmdBtn('bool.intersect', { short: 'Intersect' }),
-        cmdBtn('mod.linear', { short: 'Linear' }),
-        cmdBtn('mod.circular', { short: 'Circular' }),
-        cmdBtn('mod.mirror', { short: 'Mirror' }),
-      ]);
-      group('Transform', [
-        cmdBtn('gizmo.translate', { short: 'Move', active: this.gizmoMode === 'translate' }),
-        cmdBtn('gizmo.rotate', { short: 'Rotate', active: this.gizmoMode === 'rotate' }),
-        cmdBtn('gizmo.scale', { short: 'Scale', active: this.gizmoMode === 'scale' }),
-      ]);
-      group('Measure', [
-        cmdBtn('measure.distance', { short: 'Distance' }),
-        cmdBtn('measure.angle', { short: 'Angle' }),
-        cmdBtn('measure.off', { short: 'Off' }),
-      ]);
-      group('View', [cmdBtn('view.fit', { short: 'Fit' }), cmdBtn('view.shading', { short: 'Shading' }), cmdBtn('view.ortho', { short: 'Ortho' })]);
-    } else if (this.workspace === 'draft') {
-      const g = el('div', { class: 'tb-group' });
-      for (const t of DRAW_TOOLS) {
-        g.appendChild(el('button', {
-          class: `tool ${this.draft.tool === t.id ? 'active' : ''}`,
-          title: `${t.label}${t.key ? `  (${t.key})` : ''}`,
-          onclick: () => { this.draft.setTool(t.id); this.buildToolbar(); },
-        }, [el('span', { class: 'gl', text: t.glyph }), el('span', { class: 'tx', text: t.label })]));
+  buildRibbon() {
+    const bar = clear($('#ribbon'));
+    for (const group of ribbonDefs(this)) {
+      const items = el('div', { class: 'rb-items' });
+      for (const it of group.items) {
+        if (typeof it === 'string') items.appendChild(this.ribbonButton(it));
+        else if (it.custom) items.appendChild(this.ribbonCustom(it.custom));
       }
-      bar.appendChild(el('span', { class: 'tb-label', text: 'Draw' }));
-      bar.appendChild(g);
-      bar.appendChild(el('span', { class: 'tb-sep' }));
-      group('Modify', [
-        el('button', { class: 'tool', title: 'Duplicate', onclick: () => { this.draft.duplicateSelection(); this.refreshUI(); } }, [el('span', { class: 'gl', text: '⧉' }), el('span', { class: 'tx', text: 'Copy' })]),
-        el('button', { class: 'tool', title: 'Rotate 90°', onclick: () => this.rotateDraftSelection(90) }, [el('span', { class: 'gl', text: '⟲' }), el('span', { class: 'tx', text: 'Rotate' })]),
-        el('button', { class: 'tool', title: 'Mirror across X', onclick: () => this.mirrorDraftSelection('x') }, [el('span', { class: 'gl', text: '⇄' }), el('span', { class: 'tx', text: 'Mirror' })]),
-        el('button', { class: 'tool', title: 'Delete selection', onclick: () => { this.draft.deleteSelection(); this.refreshUI(); } }, [el('span', { class: 'gl', text: '✕' }), el('span', { class: 'tx', text: 'Delete' })]),
-      ]);
-      group('Aids', [
-        el('button', {
-          class: `tool ${this.draft.ortho ? 'toggled' : ''}`, title: 'Ortho mode (F8)',
-          onclick: () => { this.draft.ortho = !this.draft.ortho; this.draft.polar = false; this.buildToolbar(); this.refreshUI(); },
-        }, [el('span', { class: 'gl', text: '⊥' }), el('span', { class: 'tx', text: 'Ortho' })]),
-        el('button', {
-          class: `tool ${this.draft.polar ? 'toggled' : ''}`, title: 'Polar tracking (F10)',
-          onclick: () => { this.draft.polar = !this.draft.polar; this.draft.ortho = false; this.buildToolbar(); this.refreshUI(); },
-        }, [el('span', { class: 'gl', text: '✳' }), el('span', { class: 'tx', text: 'Polar' })]),
-        el('button', {
-          class: `tool ${this.draft.snap.on ? 'toggled' : ''}`, title: 'Object snap (F3)',
-          onclick: () => { this.draft.snap.on = !this.draft.snap.on; this.buildToolbar(); this.refreshUI(); },
-        }, [el('span', { class: 'gl', text: '⌖' }), el('span', { class: 'tx', text: 'Snap' })]),
-      ]);
-      group('Make', [cmdBtn('sketch.extrude', { short: 'Extrude' }), cmdBtn('sketch.revolve', { short: 'Revolve' })]);
-      group('View', [
-        el('button', { class: 'tool', title: 'Zoom extents', onclick: () => this.draft.zoomExtents() }, [el('span', { class: 'gl', text: '⤢' }), el('span', { class: 'tx', text: 'Fit' })]),
-        cmdBtn('export.dxf', { short: 'DXF' }),
-        cmdBtn('export.svg', { short: 'SVG' }),
-      ]);
-    } else {
-      group('Playback', [
-        cmdBtn('sim.play', { short: 'Play' }),
-        cmdBtn('sim.rewind', { short: 'Rewind' }),
-        cmdBtn('sim.key', { short: 'Key pose' }),
-      ]);
-      group('4D', [
-        cmdBtn('sim.autoSchedule', { short: 'Sequence' }),
-        cmdBtn('sim.dropTest', { short: 'Drop test' }),
-        cmdBtn('sim.bake', { short: 'Bake' }),
-      ]);
-      group('Output', [cmdBtn('sim.record', { short: 'Record' }), cmdBtn('export.png', { short: 'PNG' })]);
-      group('View', [cmdBtn('view.fit', { short: 'Fit' }), cmdBtn('view.shading', { short: 'Shading' })]);
+      bar.appendChild(el('div', { class: 'rb-group' }, [items, el('div', { class: 'rb-label', text: group.label })]));
     }
-    if (bar.lastChild && bar.lastChild.classList?.contains('tb-sep')) bar.lastChild.remove();
+    this.refreshRibbon();
   }
 
-  updateToolbarState() {
-    for (const b of document.querySelectorAll('#toolbar .tool[data-cmd]')) {
-      const id = b.dataset.cmd;
-      if (id.startsWith('bool.')) b.disabled = this.selection.size < 2;
-      else if (id.startsWith('mod.')) b.disabled = this.selection.size !== 1;
-      else if (id === 'view.selection') b.disabled = this.selection.size === 0;
+  ribbonButton(id) {
+    const c = this.commandMap.get(id);
+    if (!c) return el('span');
+    const short = SHORT_LABEL[id] || c.label;
+    return el('button', {
+      class: 'tool', dataset: { cmd: id },
+      title: `${c.label}${c.key ? `   ${c.key}` : ''}`,
+      onclick: () => this.run(id),
+    }, [icon(c.icon || 'dots', { size: 18 }), el('span', { class: 'tx', text: short })]);
+  }
+
+  ribbonCustom(kind) {
+    if (kind === 'moreSolids') {
+      const rest = Object.entries(CATALOG).filter(([, c]) => c.group === 'solid').slice(8);
+      return el('button', {
+        class: 'tool', title: 'More solids',
+        onclick: (e) => dropdown(e.currentTarget, rest.map(([t]) => this.menuItem(`add.${t}`))),
+      }, [icon('dots', { size: 18 }), el('span', { class: 'tx', text: 'More' })]);
+    }
+    if (kind === 'layerPicker') {
+      const draw = store.doc.draw;
+      const active = draw.layers.find(l => l.id === draw.activeLayer) || draw.layers[0];
+      return el('button', {
+        class: 'tool compact', title: 'Active drawing layer',
+        onclick: (e) => dropdown(e.currentTarget, [
+          { header: 'Active layer' },
+          ...draw.layers.map(l => ({
+            label: l.name, icon: 'layers', checked: l.id === draw.activeLayer,
+            run: () => { store.edit('Active layer', (d) => { d.draw.activeLayer = l.id; }, { rebuild: false }); this.refreshUI(); this.buildRibbon(); },
+          })),
+          '-', this.menuItem('draft.addLayer'),
+        ]),
+      }, [
+        el('span', { style: { width: '11px', height: '11px', borderRadius: '3px', background: active?.color || '#888', border: '1px solid rgba(127,127,127,.5)' } }),
+        el('span', { class: 'tx', text: active?.name || '0' }),
+        icon('chevron-down', { size: 12 }),
+      ]);
+    }
+    if (kind === 'speedPicker') {
+      const sp = store.doc.sim.speed || 1;
+      return el('button', {
+        class: 'tool compact', title: 'Playback speed',
+        onclick: (e) => dropdown(e.currentTarget, [0.1, 0.25, 0.5, 1, 2, 4].map(s => ({
+          label: `${s}×`, checked: s === sp,
+          run: () => { store.quiet((d) => { d.sim.speed = s; }); this.buildRibbon(); this.timeline.render(); },
+        }))),
+      }, [icon('gauge', { size: 18 }), el('span', { class: 'tx', text: `${sp}×` }), icon('chevron-down', { size: 12 })]);
+    }
+    return el('span');
+  }
+
+  refreshRibbon() {
+    for (const b of $$('#ribbon .tool[data-cmd]')) {
+      const c = this.commandMap.get(b.dataset.cmd);
+      if (!c) continue;
+      if (c.enabled) b.disabled = !c.enabled();
+      if (c.checked) b.classList.toggle('toggled', !!c.checked());
     }
   }
 
@@ -886,109 +1225,425 @@ class App {
     const host = clear($('#viewcube'));
     const mk = (label, view, wide = false) => el('button', {
       class: `vc${wide ? ' wide' : ''}`, text: label, title: `${label} view`,
-      onclick: () => { if (this.workspace === 'draft') this.draft.zoomExtents(); else this.vp.standardView(view); },
+      onclick: () => this.vp.standardView(view),
     });
     host.append(
       el('div', { class: 'vc-row' }, [mk('TOP', 'top'), mk('FRT', 'front'), mk('RGT', 'right')]),
       el('div', { class: 'vc-row' }, [mk('BTM', 'bottom'), mk('BCK', 'back'), mk('LFT', 'left')]),
-      el('div', { class: 'vc-row' }, [mk('ISO', 'iso', true), mk('⤢', 'fit')]),
+      el('div', { class: 'vc-row' }, [
+        mk('ISO', 'iso', true),
+        el('button', { class: 'vc', title: 'Zoom to fit  (F)', onclick: () => this.zoomFit() }, [icon('fit', { size: 13 })]),
+      ]),
     );
-    host.lastChild.lastChild.onclick = () => (this.workspace === 'draft' ? this.draft.zoomExtents() : this.vp.frameAll());
     this.drawAxisHint();
     bus.on(T.VIEW, () => this.drawAxisHint());
   }
 
   drawAxisHint() {
     const host = $('#axisHint');
+    if (!host) return;
     if (!this._axisSvg) {
-      host.innerHTML = '<svg viewBox="-40 -40 80 80" width="74" height="74"></svg>';
+      host.innerHTML = '<svg viewBox="-40 -40 80 80" width="72" height="72"></svg>';
       this._axisSvg = host.firstChild;
     }
-    const cam = this.vp.camera;
-    const m = new THREE.Matrix4().copy(cam.matrixWorldInverse);
-    const project = (v) => {
-      const p = v.clone().applyMatrix4(m);
-      return [p.x, -p.y];
-    };
-    const L = 30;
-    const axes = [
-      [new THREE.Vector3(L, 0, 0), '#ff5f56', 'X'],
-      [new THREE.Vector3(0, L, 0), '#5ad469', 'Y'],
-      [new THREE.Vector3(0, 0, L), '#4da3ff', 'Z'],
-    ];
-    const scale = 1;
+    const m = new THREE.Matrix4().copy(this.vp.camera.matrixWorldInverse);
+    const project = (v) => { const p = v.clone().applyMatrix4(m); return [p.x, -p.y]; };
     let svg = '';
-    for (const [v, colour, label] of axes) {
-      const [x, y] = project(v).map(n => n * scale);
+    for (const [v, colour, label] of [
+      [new THREE.Vector3(30, 0, 0), 'var(--x-axis)', 'X'],
+      [new THREE.Vector3(0, 30, 0), 'var(--y-axis)', 'Y'],
+      [new THREE.Vector3(0, 0, 30), 'var(--z-axis)', 'Z'],
+    ]) {
+      const [x, y] = project(v);
       const len = Math.hypot(x, y) || 1;
-      const k = Math.min(1, 30 / len);
-      svg += `<line x1="0" y1="0" x2="${(x * k).toFixed(1)}" y2="${(y * k).toFixed(1)}" stroke="${colour}" stroke-width="2.4" stroke-linecap="round"/>`;
-      svg += `<text x="${(x * k * 1.22).toFixed(1)}" y="${(y * k * 1.22 + 3.5).toFixed(1)}" fill="${colour}" font-size="10" text-anchor="middle" font-family="system-ui">${label}</text>`;
+      const k = Math.min(1, 29 / len);
+      svg += `<line x1="0" y1="0" x2="${(x * k).toFixed(1)}" y2="${(y * k).toFixed(1)}" stroke="${colour}" stroke-width="2.2" stroke-linecap="round"/>`;
+      svg += `<circle cx="${(x * k).toFixed(1)}" cy="${(y * k).toFixed(1)}" r="6.5" fill="${colour}"/>`;
+      svg += `<text x="${(x * k).toFixed(1)}" y="${(y * k + 3).toFixed(1)}" fill="#fff" font-size="8.5" text-anchor="middle" font-family="system-ui" font-weight="700">${label}</text>`;
     }
     this._axisSvg.innerHTML = svg;
   }
 
-  toggleTheme() {
-    const root = document.documentElement;
-    const next = root.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
-    root.setAttribute('data-theme', next);
-    try { localStorage.setItem('tessercad.theme', next); } catch { /* ignore */ }
-    this.applyView();
-    this.draft.invalidate();
-    this.timeline.drawRuler();
+  /* ========================================================= status bar */
+
+  updateStatus() {
+    const s = this.build?.stats;
+    const u = store.doc.meta.units;
+    const units = clear($('#statusUnits'));
+    units.append(icon('ruler', { size: 12 }), el('span', { text: u }));
+
+    const sel = clear($('#statusSel'));
+    const n = this.workspace === 'draft' ? this.draft.selection.size : this.selection.size;
+    if (n) sel.append(icon('target', { size: 12 }), el('span', { text: `${n} selected` }));
+
+    if (this.workspace === 'draft') {
+      $('#statusStats').textContent = `${store.doc.draw.entities.length} objects · ${store.doc.draw.layers.length} layers`;
+    } else if (s) {
+      $('#statusStats').textContent = `${s.bodies} bodies · ${s.tris.toLocaleString()} tris · ${fmt(s.mass, 3)} kg · ${Math.round(this.buildMs || 0)} ms`;
+    }
+    if (!this.ops.running) this.setStatusKeys(this.defaultKeyHints());
   }
 
-  /* ==================================================================
-     Global UI bindings
-     ================================================================== */
+  defaultKeyHints() {
+    if (this.workspace === 'draft') return [['LMB', 'draw'], ['RMB', 'pan'], ['wheel', 'zoom'], ['F3/F8', 'snap/ortho']];
+    if (this.workspace === 'sim') return [['space', 'play'], [',/.', 'step'], ['K', 'key pose']];
+    return [['LMB', 'select'], ['RMB', 'menu'], ['G/R/S', 'transform'], ['Q', 'quick'], ['Ctrl K', 'commands']];
+  }
+
+  setStatusKeys(pairs) {
+    const host = clear($('#statusKeys'));
+    if (!pairs) return;
+    for (const [k, label] of pairs) {
+      host.appendChild(el('span', {}, [el('kbd', { text: k }), el('span', { text: label })]));
+    }
+  }
+
+  draftStatus({ coords, prompt, snap }) {
+    $('#statusCoords').textContent = coords;
+    if (this.workspace === 'draft') status(prompt ? `${prompt}${snap ? `   ·   snap: ${snap}` : ''}` : 'Ready');
+  }
+
+  /* ========================================================= learn card */
+
+  LEARN_STEPS = [
+    ['create', 'Add a solid from the <b>Create</b> group'],
+    ['select', 'Click it in the viewport'],
+    ['transform', 'Press <b>G</b> and move it, then type a number'],
+    ['boolean', 'Select two bodies and press <b>Subtract</b>'],
+    ['draw', 'Switch to <b>Draft</b> and draw a shape'],
+    ['extrude', 'Select it and press <b>Extrude</b>'],
+    ['sequence', 'In <b>Simulate</b>, press <b>Sequence</b>'],
+    ['play', 'Press <b>space</b> to play the timeline'],
+  ];
+
+  markLearn(step) {
+    if (this.prefs.learnDone.includes(step)) return;
+    this.prefs.learnDone.push(step);
+    this.savePrefs();
+    this.renderLearn();
+  }
+
+  toggleLearn() {
+    this.prefs.showLearn = !this.prefs.showLearn;
+    this.savePrefs();
+    this.renderLearn();
+  }
+
+  renderLearn() {
+    const card = $('#learnCard');
+    if (!card) return;
+    const done = new Set(this.prefs.learnDone);
+    if (!this.prefs.showLearn || done.size >= this.LEARN_STEPS.length) { card.hidden = true; return; }
+    card.hidden = false;
+    clear(card);
+    const next = this.LEARN_STEPS.findIndex(([k]) => !done.has(k));
+    card.append(
+      el('h4', {}, [
+        icon('bulb', { size: 15 }),
+        el('span', { text: `Learn TesserCAD · ${done.size}/${this.LEARN_STEPS.length}` }),
+        el('button', { class: 'mini-btn', title: 'Hide this card', onclick: () => this.toggleLearn() }, [icon('close', { size: 13 })]),
+      ]),
+      el('ol', {}, this.LEARN_STEPS.slice(Math.max(0, next - 1), next + 2).map(([k, html]) =>
+        el('li', { class: done.has(k) ? 'done' : '', html }))),
+      el('div', { class: 'learn-bar' }, [el('i', { style: { width: `${(done.size / this.LEARN_STEPS.length) * 100}%` } })]),
+    );
+  }
+
+  /* ============================================================ dialogs */
+
+  showHistory() {
+    const undo = store.undoStack;
+    const redo = store.redoStack;
+    const rows = [];
+    undo.forEach((h, i) => rows.push({ label: h.label, i, kind: 'past' }));
+    rows.push({ label: 'Current state', kind: 'now' });
+    [...redo].reverse().forEach((h) => rows.push({ label: h.label, kind: 'future' }));
+
+    const list = el('div', { class: 'hist-list' }, rows.map((r, k) => el('div', {
+      class: `hist-item ${r.kind === 'now' ? 'now' : r.kind === 'future' ? 'future' : ''}`,
+      onclick: () => {
+        const nowIndex = undo.length;
+        if (k < nowIndex) { for (let n = 0; n < nowIndex - k; n++) store.undo(); }
+        else if (k > nowIndex) { for (let n = 0; n < k - nowIndex; n++) store.redo(); }
+        closeModal();
+        this.refreshUI();
+      },
+    }, [
+      icon(r.kind === 'now' ? 'target' : r.kind === 'future' ? 'redo' : 'undo', { size: 14 }),
+      el('span', { class: 'hn', text: r.label }),
+      el('span', { class: 'hi', text: r.kind === 'now' ? 'you are here' : '' }),
+    ])));
+
+    modal({
+      title: 'Undo history', icon: 'history',
+      subtitle: `${undo.length} step${undo.length === 1 ? '' : 's'} back, ${redo.length} forward. Click any step to jump there.`,
+      body: [undo.length || redo.length ? list : emptyState('Nothing to undo yet', 'Every edit you make lands here.', 'history')],
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  showPrefs() {
+    const p = this.prefs;
+    modal({
+      title: 'Preferences', icon: 'settings',
+      subtitle: 'Stored in this browser only — they travel with the machine, not the document.',
+      body: [
+        section('Appearance', [
+          field('Theme', segmented(p.theme, [['dark', 'Dark', 'moon'], ['light', 'Light', 'sun']], (v) => {
+            if (v !== p.theme) this.toggleTheme();
+          })),
+          field('Edge angle', scrubNumber(p.edgeAngle, () => {}, {
+            step: 1, min: 1, max: 89, precision: 0,
+            onCommit: (v) => this.setPref('edgeAngle', v),
+          }), { hint: 'Faces meeting at more than this angle get a drawn edge. Lower shows more edges.' }),
+        ]),
+        section('Interaction', [
+          field('Gizmo size', scrubNumber(p.gizmoSize, () => {}, {
+            step: 0.05, min: 0.3, max: 2, precision: 2, onCommit: (v) => this.setPref('gizmoSize', v),
+          })),
+          field('Snap step', scrubNumber(p.snapStep, () => {}, {
+            step: 1, min: 0.1, max: 100, precision: 2, onCommit: (v) => this.setPref('snapStep', v),
+          }), { hint: 'Hold Ctrl during a move operator to snap to this increment.' }),
+          checkbox('Confirm before deleting', p.confirmDelete, (v) => this.setPref('confirmDelete', v)),
+          checkbox('Show the learning card', p.showLearn, (v) => { this.prefs.showLearn = v; this.savePrefs(); this.renderLearn(); }),
+        ]),
+        section('Session', [
+          field('Autosave every', scrubNumber(p.autosaveSec, () => {}, {
+            step: 5, min: 5, max: 600, precision: 0, suffix: ' s',
+            onCommit: (v) => {
+              this.setPref('autosaveSec', v);
+              clearInterval(this._autosave);
+              this._autosave = setInterval(() => { if (store.dirty) { saveLocal(); this.markSaved(); } }, v * 1000);
+            },
+          }), { hint: 'Seconds between automatic saves into browser storage.' }),
+          el('div', { class: 'btn-row' }, [
+            el('button', { class: 'btn sm', text: 'Reset the learning card', onclick: () => { this.prefs.learnDone = []; this.savePrefs(); this.renderLearn(); this.flash('Learning card reset', 'ok'); } }),
+            el('button', { class: 'btn sm danger', text: 'Reset all preferences', onclick: () => {
+              this.prefs = { ...DEFAULT_PREFS };
+              this.savePrefs();
+              document.documentElement.setAttribute('data-theme', this.prefs.theme);
+              closeModal();
+              this.refreshUI();
+              this.flash('Preferences reset', 'ok');
+            } }),
+          ]),
+        ]),
+      ],
+      actions: [{ label: 'Done', primary: true }],
+    });
+  }
+
+  showMassReport() {
+    if (!this.build) return;
+    const u = store.doc.meta.units;
+    const rows = [];
+    let totalV = 0, totalM = 0;
+    for (const f of this.build.topLevel) {
+      const r = this.build.results.get(f.id);
+      if (!r || r.error) continue;
+      let v = 0;
+      for (const inst of r.instances) v += massProperties(inst.geometry, inst.matrix).volume;
+      const m = v * (MATERIALS[f.material] || MATERIALS.steel).density;
+      totalV += v; totalM += m;
+      rows.push([f.name, MATERIALS[f.material]?.name || f.material, String(r.instances.length), `${fmt(v)} mm³`, `${fmt(m, 4)} kg`]);
+    }
+    const s = this.build.stats;
+    const size = s.box.isEmpty() ? null : s.box.getSize(new THREE.Vector3());
+    const table = el('table', { style: { width: '100%', borderCollapse: 'collapse', fontSize: '12px' } });
+    table.appendChild(el('tr', {}, ['Body', 'Material', 'Count', 'Volume', 'Mass'].map(h =>
+      el('th', { text: h, style: { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid var(--line)', color: 'var(--txt-3)', fontSize: '10.5px', textTransform: 'uppercase', letterSpacing: '.07em' } }))));
+    for (const r of rows) {
+      table.appendChild(el('tr', {}, r.map((cell, i) =>
+        el('td', { text: cell, style: { padding: '4px 6px', borderBottom: '1px solid var(--line-soft)', fontFamily: i >= 2 ? 'var(--mono)' : '', textAlign: i >= 2 ? 'right' : 'left' } }))));
+    }
+    modal({
+      title: 'Mass properties', icon: 'mass', wide: true,
+      subtitle: `${s.bodies} bodies · ${s.tris.toLocaleString()} triangles`,
+      body: [
+        rows.length ? table : emptyState('Nothing to measure', 'Add a solid first.', 'mass'),
+        el('h3', { text: 'Totals' }),
+        kv([
+          ['Volume', `${fmt(totalV)} mm³`],
+          ['Mass', `${fmt(totalM, 4)} kg`],
+          ['Overall size', size ? `${fmt(toDisplay(size.x, u))} × ${fmt(toDisplay(size.y, u))} × ${fmt(toDisplay(size.z, u))} ${u}` : '–'],
+          ['Centre of mass', s.bodies ? `${fmt(s.centroid.x)}, ${fmt(s.centroid.y)}, ${fmt(s.centroid.z)} mm` : '–'],
+          ['Surface area', `${fmt(s.area)} mm²`],
+        ]),
+        el('p', { class: 'hint', text: 'Volumes come from the divergence theorem over each closed mesh, so they are exact for watertight bodies and meaningless for open ones — the feature panel reports which is which.' }),
+      ],
+      actions: [
+        { label: 'Export CSV', run: () => this.exportBOM() },
+        { label: 'Close', primary: true },
+      ],
+    });
+  }
+
+  exportBOM() {
+    if (!this.build) return;
+    const per = new Map();
+    for (const f of this.build.topLevel) {
+      const r = this.build.results.get(f.id);
+      if (!r || r.error) continue;
+      let volume = 0;
+      for (const inst of r.instances) volume += massProperties(inst.geometry, inst.matrix).volume;
+      per.set(f.id, { volume, mass: volume * (MATERIALS[f.material] || MATERIALS.steel).density });
+    }
+    IO.exportBOM({ ...this.build, perFeature: per });
+  }
+
+  showShortcuts() {
+    const groups = {};
+    for (const c of this.commands) {
+      if (!c.key) continue;
+      (groups[c.group] ||= []).push(c);
+    }
+    modal({
+      title: 'Keyboard shortcuts', icon: 'keyboard', wide: true,
+      subtitle: 'Everything else is one Ctrl K away.',
+      body: [
+        ...Object.entries(groups).flatMap(([g, list]) => [
+          el('h3', { text: g }),
+          el('div', { class: 'kbd-grid' }, list.map(c => el('div', {}, [el('span', { text: c.label }), el('kbd', { text: c.key })]))),
+        ]),
+        el('h3', { text: 'Modal transform (Model / Simulate)' }),
+        el('p', { html: 'Press <kbd>G</kbd>, <kbd>R</kbd> or <kbd>S</kbd> and the selection follows the pointer. Then: <kbd>X</kbd>/<kbd>Y</kbd>/<kbd>Z</kbd> locks an axis, <kbd>⇧X</kbd> locks the perpendicular plane, typing a number sets an exact value, <kbd>⇧</kbd> is precision, <kbd>Ctrl</kbd> snaps, <kbd>⏎</kbd> confirms and <kbd>esc</kbd> cancels.' }),
+        el('h3', { text: 'Mouse' }),
+        el('p', { html: '<b>3D:</b> left-drag orbits · right-drag pans · wheel zooms · click selects · right-click opens the context menu · double-click frames.<br><b>Draft:</b> middle or right-drag pans · wheel zooms · drag right-to-left for a crossing window.' }),
+        el('h3', { text: 'Typed coordinates (Draft)' }),
+        el('p', { html: 'With a tool active, type <code>50,30</code> absolute · <code>@40,0</code> relative · <code>@60&lt;30</code> length and angle · <code>25</code> length along the cursor, then <kbd>⏎</kbd>.' }),
+      ],
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  showExpressionHelp() {
+    modal({
+      title: 'Expression reference', icon: 'book',
+      subtitle: 'Every numeric field accepts an expression, not just a number.',
+      body: [
+        el('p', { html: 'Define parameters in the <b>Parameters</b> section of the right panel, then reference them anywhere: <code>width * 2</code>, <code>thick + clearance</code>, <code>sqrt(area)</code>.' }),
+        el('h3', { text: 'Operators' }),
+        el('p', { html: '<code>+</code> <code>-</code> <code>*</code> <code>/</code> <code>%</code> <code>^</code> and parentheses. <code>^</code> is right-associative, so <code>2^3^2</code> is 512.' }),
+        el('h3', { text: 'Functions' }),
+        el('p', { html: EXPR_HELP.map(f => `<code>${f}</code>`).join(' ') }),
+        el('h3', { text: 'Constants' }),
+        el('p', { html: '<code>pi</code> <code>tau</code> <code>e</code> <code>phi</code>' }),
+        el('h3', { text: 'Angles' }),
+        el('p', { html: 'Trigonometric functions work in radians: write <code>cos(rad(30))</code>, and <code>deg(x)</code> to go back.' }),
+        el('h3', { text: 'Safety' }),
+        el('p', { text: 'Expressions are parsed by a hand-written tokeniser and recursive-descent parser that can only ever produce a number — no eval, so opening someone else’s project file can never run code.' }),
+      ],
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  showWelcome() {
+    modal({
+      title: `Welcome to ${APP_NAME}`, icon: 'bulb', wide: true,
+      subtitle: 'A parametric CAD studio that runs entirely in your browser. Nothing is uploaded.',
+      body: [
+        el('div', { class: 'card-grid' }, [
+          ['cube3d', 'Model', 'Parametric solids, booleans, patterns and mirrors in a rebuildable feature tree.'],
+          ['sketch', 'Draft', '2D drafting with snaps, layers and dimensions. Any closed profile extrudes or revolves.'],
+          ['timeline', 'Simulate', 'The fourth dimension: keyframes, build sequencing and rigid-body physics.'],
+        ].map(([ic, t, b]) => el('div', { class: 'card', style: { cursor: 'default' } }, [
+          icon(ic, { size: 22 }), el('b', { text: t }), el('span', { text: b }),
+        ]))),
+        el('h3', { text: 'Three things worth knowing' }),
+        el('p', { html: '<b>Type expressions, not numbers.</b> Any field takes <code>width*2</code> and rebuilds when <code>width</code> changes.<br><b>Press G, R or S.</b> The selection follows the pointer; press X/Y/Z to lock an axis or type an exact value.<br><b>Press Ctrl K.</b> Every one of the 150+ commands is one search away.' }),
+        el('h3', { text: 'Honest limits' }),
+        el('p', { html: 'This is a mesh modeller, not a B-rep kernel: no true fillets on arbitrary edges and no STEP export. Dynamics use bounding-sphere collisions — right for drop tests and sequencing, not for stress analysis.' }),
+      ],
+      actions: [
+        { label: 'Browse templates', run: () => setTimeout(() => this.showTemplates(), 60) },
+        { label: 'Shortcuts', run: () => setTimeout(() => this.showShortcuts(), 60) },
+        { label: 'Start modelling', primary: true },
+      ],
+    });
+  }
+
+  showAbout() {
+    modal({
+      title: `${APP_NAME} ${APP_VERSION}`, icon: 'info',
+      body: [
+        el('p', { html: 'A free, open-source, browser-based CAD studio: parametric 3D modelling, 2D drafting and 4D simulation. No install, no account, no server.' }),
+        kv([
+          ['Version', APP_VERSION],
+          ['Commands', String(this.commands.length)],
+          ['Renderer', 'three.js r169 (vendored)'],
+          ['Project format', `${FILE_EXT} — plain JSON`],
+          ['Licence', 'MIT'],
+        ]),
+        el('p', { class: 'hint', html: 'Built as a single static site. <a href="https://github.com/samuelhtampubolon/Portofolio_Tutorial" target="_blank" rel="noopener">Source on GitHub</a>.' }),
+      ],
+      actions: [{ label: 'Close', primary: true }],
+    });
+  }
+
+  openLink(url) { window.open(url, '_blank', 'noopener'); }
+
+  /* =========================================================== commands */
+
+  run(id) {
+    const c = this.commandMap.get(id);
+    if (!c) { console.warn('unknown command', id); return; }
+    if (c.enabled && !c.enabled()) { this.flash(`${c.label} is not available right now`, 'warn', 2000); return; }
+    c.run();
+  }
+
+  openPalette() {
+    commandPalette(this.commands.map(c => ({
+      ...c, label: c.checked?.() ? `${c.label}  ✓` : c.label,
+    })), (c) => this.run(c.id), { context: WS_META[this.workspace].label });
+  }
+
+  openQuickMenu(x, y) {
+    const ids = quickDefaults(this);
+    quickMenu(x, y, ids.map(id => this.commandMap.get(id)).filter(Boolean), (c) => this.run(c.id));
+  }
+
+  showViewportMenu(e, hit) {
+    const id = hit?.object?.userData?.featureId || null;
+    if (id && !this.selection.has(id)) this.select([id]);
+    contextMenu(e.clientX, e.clientY, viewportContextMenu(this, (cid) => this.menuItem(cid), id).filter(Boolean));
+  }
+
+  /* ============================================================ binding */
 
   bindGlobalUI() {
-    for (const b of document.querySelectorAll('.ws')) b.addEventListener('click', () => this.setWorkspace(b.dataset.ws));
-    $('#btnUndo').addEventListener('click', () => store.undo());
-    $('#btnRedo').addEventListener('click', () => store.redo());
-    $('#btnTheme').addEventListener('click', () => this.toggleTheme());
-    $('#btnHelp').addEventListener('click', () => this.showHelp());
-    $('#docName').addEventListener('change', (e) => {
-      store.quiet((d) => { d.meta.name = e.target.value || 'Untitled'; });
-    });
     const wa = $('#workarea');
-    const mobile = () => matchMedia('(max-width: 860px)').matches;
+    const mobile = () => matchMedia('(max-width: 900px)').matches;
     const drawer = (side) => {
       const cls = side === 'left' ? 'mobile-left' : 'mobile-right';
-      const other = side === 'left' ? 'mobile-right' : 'mobile-left';
-      wa.classList.remove(other);
+      wa.classList.remove(side === 'left' ? 'mobile-right' : 'mobile-left');
       wa.classList.toggle(cls);
     };
-    $('#mobLeft').addEventListener('click', () => drawer('left'));
-    $('#mobRight').addEventListener('click', () => drawer('right'));
+    const ml = $('#mobLeft'), mr = $('#mobRight');
+    ml.appendChild(icon('panel-left', { size: 14 }));
+    mr.appendChild(icon('panel-right', { size: 14 }));
+    ml.addEventListener('click', () => drawer('left'));
+    mr.addEventListener('click', () => drawer('right'));
     $('#stage').addEventListener('pointerdown', (e) => {
-      if (!mobile()) return;
-      if (e.target.closest('.edge-tab')) return;
+      if (!mobile() || e.target.closest('.edge-tab')) return;
       wa.classList.remove('mobile-left', 'mobile-right');
     });
 
-    $('#btnCollapseLeft').addEventListener('click', () => {
-      const w = $('#workarea');
-      if (mobile()) { w.classList.remove('mobile-left'); return; }
-      w.classList.toggle('left-collapsed');
-      $('#btnCollapseLeft').textContent = w.classList.contains('left-collapsed') ? '›' : '‹';
-      setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
-    });
-    $('#btnCollapseRight').addEventListener('click', () => {
-      const w = $('#workarea');
-      if (mobile()) { w.classList.remove('mobile-right'); return; }
-      w.classList.toggle('right-collapsed');
-      $('#btnCollapseRight').textContent = w.classList.contains('right-collapsed') ? '‹' : '›';
-      setTimeout(() => { this.vp.resize(); this.draft.resize(); }, 30);
-    });
-    try {
-      const t = localStorage.getItem('tessercad.theme');
-      if (t) document.documentElement.setAttribute('data-theme', t);
-    } catch { /* ignore */ }
+    const leftActions = clear($('#leftActions'));
+    leftActions.appendChild(el('button', {
+      class: 'mini-btn', title: 'Collapse the outline panel  (T)',
+      onclick: () => (mobile() ? wa.classList.remove('mobile-left') : this.togglePanel('left')),
+    }, [icon('chevron-left', { size: 14 })]));
+
+    const rightActions = clear($('#rightActions'));
+    rightActions.appendChild(el('button', {
+      class: 'mini-btn', title: 'Collapse the properties panel  (N)',
+      onclick: () => (mobile() ? wa.classList.remove('mobile-right') : this.togglePanel('right')),
+    }, [icon('chevron-right', { size: 14 })]));
 
     this.vp.onHover = (hit) => {
+      const u = store.doc.meta.units;
       $('#viewInfo').textContent = hit
-        ? `${store.feature(hit.object.userData.featureId)?.name || ''}  ·  ${fmt(toDisplay(hit.point.x, store.doc.meta.units))}, ${fmt(toDisplay(hit.point.y, store.doc.meta.units))}, ${fmt(toDisplay(hit.point.z, store.doc.meta.units))}`
+        ? `${store.feature(hit.object.userData.featureId)?.name || ''}\n${fmt(toDisplay(hit.point.x, u))}, ${fmt(toDisplay(hit.point.y, u))}, ${fmt(toDisplay(hit.point.z, u))} ${u}`
         : '';
     };
   }
@@ -1000,9 +1655,8 @@ class App {
       input.value = '';
       if (!file) return;
       try { await IO.importAny(file); this.vp.frameAll(); }
-      catch (e) { toast(e.message, 'err', 6000); }
+      catch (e) { this.flash(e.message, 'err', 6000); }
     });
-
     const stage = $('#stage');
     stage.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
     stage.addEventListener('drop', async (e) => {
@@ -1010,7 +1664,7 @@ class App {
       const file = e.dataTransfer.files?.[0];
       if (!file) return;
       try { await IO.importAny(file); this.vp.frameAll(); }
-      catch (err) { toast(err.message, 'err', 6000); }
+      catch (err) { this.flash(err.message, 'err', 6000); }
     });
   }
 
@@ -1021,143 +1675,131 @@ class App {
   }
 
   bindKeys() {
+    addEventListener('keyup', (e) => { if (this.ops.running) this.ops.onKeyUp(e); });
+
     addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
       const typing = tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable;
       const mod = e.ctrlKey || e.metaKey;
 
+      // a running operator owns the keyboard
+      if (this.ops.running && !typing) { if (this.ops.onKey(e)) { e.preventDefault(); return; } }
+
       if (e.key === 'Escape') {
+        if (isQuickMenuOpen()) { closeQuickMenu(); return; }
         if (isModalOpen()) { closeModal(); return; }
         closeDropdown();
-        if (this.workspace === 'draft') { if (this.draft.cancel()) { this.buildToolbar(); this.refreshUI(); return; } }
-        if (this.vp.measureMode) { this.vp.setMeasureMode(null); $('#hud').textContent = ''; return; }
+        if (this.workspace === 'draft' && this.draft.cancel()) { this.buildRibbon(); this.refreshUI(); return; }
+        if (this.vp.measureMode) { this.stopMeasuring(); return; }
+        if (this.isolated) { this.isolated = null; this.applyIsolation(); this.refreshUI(); return; }
         this.select([]);
         return;
       }
 
       if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); this.openPalette(); return; }
-      if (typing) {
-        // typed coordinate entry is handled by the draft canvas below
-        return;
-      }
+      if (typing) return;
 
       if (mod) {
         const k = e.key.toLowerCase();
-        if (k === 'z') { e.preventDefault(); e.shiftKey ? store.redo() : store.undo(); return; }
-        if (k === 'y') { e.preventDefault(); store.redo(); return; }
-        if (k === 's') { e.preventDefault(); IO.saveProject(); return; }
-        if (k === 'o') { e.preventDefault(); this.pickFile('.tcad,.json'); return; }
-        if (k === 'n') { e.preventDefault(); this.run('file.new'); return; }
-        if (k === 'd') { e.preventDefault(); this.duplicateSelection(); return; }
-        if (k === 'a') { e.preventDefault(); this.run('edit.selectAll'); return; }
+        const map = {
+          z: () => (e.shiftKey ? (this.zenModeOrRedo(e)) : store.undo()),
+          y: () => store.redo(),
+          s: () => (e.shiftKey ? this.saveAs() : IO.saveProject()),
+          o: () => this.pickFile('.tcad,.json'),
+          n: () => this.newDocument(),
+          i: () => (e.shiftKey ? this.invertSelection() : this.pickFile(IO.IMPORT_ACCEPT)),
+          d: () => this.duplicateSelection(),
+          a: () => this.selectAll(),
+          h: () => (e.shiftKey ? this.showHistory() : null),
+          l: () => (e.shiftKey ? this.toggleTheme() : null),
+          ',': () => this.showPrefs(),
+          '=': () => this.zoomBy(1.25),
+          '+': () => this.addBoolean('union'),
+          '-': () => this.addBoolean('subtract'),
+        };
+        if (map[k]) { e.preventDefault(); map[k](); }
         return;
       }
 
-      if (e.key === 'F1') { e.preventDefault(); this.showHelp(); return; }
+      if (e.altKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'a') { e.preventDefault(); this.select([]); return; }
+        if (k === 'h') { e.preventDefault(); this.setVisible(true, { all: true }); return; }
+        return;
+      }
+
+      if (e.key === 'F1') { e.preventDefault(); this.showShortcuts(); return; }
+      if (e.key === 'F2') { e.preventDefault(); this.renameSelected(); return; }
+      if (e.key === 'F11') { e.preventDefault(); this.toggleFullscreen(); return; }
       if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); this.deleteSelection(); return; }
 
-      if (this.workspace === 'draft') {
-        if (e.key === 'F3') { e.preventDefault(); this.draft.snap.on = !this.draft.snap.on; this.buildToolbar(); return; }
-        if (e.key === 'F8') { e.preventDefault(); this.draft.ortho = !this.draft.ortho; this.draft.polar = false; this.buildToolbar(); return; }
-        if (e.key === 'F10') { e.preventDefault(); this.draft.polar = !this.draft.polar; this.draft.ortho = false; this.buildToolbar(); return; }
-        if (this.draft.pending.length && this.draft.typeKey(e.key)) { e.preventDefault(); return; }
-        if (e.key.toLowerCase() === 'c' && this.draft.pending.length >= 3) { this.draft.closeChain(); return; }
-        const tool = DRAW_TOOLS.find(t => t.key && t.key.toLowerCase() === e.key.toLowerCase());
-        if (tool) { this.draft.setTool(tool.id); this.buildToolbar(); return; }
-        if (e.key === 'Enter') { this.draft._finishChain(); return; }
-        return;
-      }
+      if (this.workspace === 'draft') { this.draftKey(e); return; }
 
-      switch (e.key.toLowerCase()) {
-        case ' ': e.preventDefault(); this.run('sim.play'); break;
-        case 'g': this.setGizmo('translate'); break;
-        case 'r': this.setGizmo('rotate'); break;
-        case 't': this.setGizmo('scale'); break;
-        case 'f': this.vp.frameAll(); break;
-        case 'o': this.run('view.ortho'); break;
-        case '1': this.vp.standardView('front'); break;
-        case '2': this.vp.standardView('back'); break;
-        case '3': this.vp.standardView('right'); break;
-        case '4': this.vp.standardView('left'); break;
-        case '5': this.vp.standardView('top'); break;
-        case '6': this.vp.standardView('bottom'); break;
-        case '0': this.vp.standardView('iso'); break;
-        case ',': this.sim.step(-1); break;
-        case '.': this.sim.step(1); break;
-        case 'home': this.sim.seek(0); break;
-        default: break;
-      }
-      if (e.key === 'Home') this.sim.seek(0);
-      if (e.key === 'End') this.sim.seek(store.doc.sim.duration);
+      const k = e.key.toLowerCase();
+      const actions = {
+        ' ': () => this.togglePlay(),
+        g: () => this.startOperator('move'),
+        r: () => this.startOperator('rotate'),
+        s: () => this.startOperator('scale'),
+        w: () => this.setGizmo('translate'),
+        e: () => (e.shiftKey ? this.setGizmo('rotate') : null),
+        f: () => (e.shiftKey ? this.vp.frameSelection() : this.zoomFit()),
+        z: () => this.cycleShading(),
+        h: () => this.setVisible(false),
+        d: () => this.dropSelection(),
+        k: () => this.keyPose(),
+        m: () => this.vp.setMeasureMode('distance'),
+        q: () => this.openQuickMenu(innerWidth / 2, innerHeight / 2),
+        '/': () => this.isolate(),
+        n: () => this.togglePanel('right'),
+        t: () => this.togglePanel('left'),
+        '0': () => this.vp.standardView('iso'),
+        '1': () => this.vp.standardView(e.shiftKey ? 'back' : 'front'),
+        '3': () => this.vp.standardView(e.shiftKey ? 'left' : 'right'),
+        '5': () => this.run('view.ortho'),
+        '7': () => this.vp.standardView(e.shiftKey ? 'bottom' : 'top'),
+        ',': () => this.sim.step(-1),
+        '.': () => this.sim.step(1),
+        '+': () => this.zoomBy(1.25),
+        '=': () => this.zoomBy(1.25),
+        '-': () => this.zoomBy(0.8),
+      };
+      if (actions[k]) { e.preventDefault(); actions[k](); return; }
+      if (e.key === 'Home') { this.sim.seek(0); return; }
+      if (e.key === 'End') { this.sim.seek(store.doc.sim.duration); return; }
     });
   }
 
-  /* ------------------------------------------------------------- modals */
-
-  showHelp() {
-    const rows = [
-      ['Command palette', 'Ctrl K'], ['Save project', 'Ctrl S'], ['Open project', 'Ctrl O'],
-      ['Undo / redo', 'Ctrl Z / Ctrl ⇧ Z'], ['Duplicate', 'Ctrl D'], ['Select all', 'Ctrl A'],
-      ['Delete selection', 'Del'], ['Zoom to fit', 'F'], ['Move / rotate / scale gizmo', 'G / R / T'],
-      ['Orthographic toggle', 'O'], ['Standard views', '1–6, 0'], ['Play / pause timeline', 'Space'],
-      ['Step one frame', ', / .'], ['Timeline start / end', 'Home / End'],
-      ['Draft: line, polyline, rect', 'L / P / R'], ['Draft: circle, arc, ellipse', 'C / A / E'],
-      ['Draft: polygon, spline, text', 'G / S / X'], ['Draft: dimension, offset, measure', 'D / O / M'],
-      ['Draft: object snap / ortho / polar', 'F3 / F8 / F10'], ['Draft: finish or close a chain', 'Enter / C'],
-      ['Cancel, clear selection', 'Esc'], ['This help', 'F1'],
-    ];
-    modal({
-      title: 'Keyboard shortcuts',
-      wide: true,
-      body: [
-        el('div', { class: 'kbd-grid' }, rows.map(([l, k]) =>
-          el('div', {}, [el('span', { text: l }), el('kbd', { text: k })]))),
-        el('h3', { text: 'Mouse' }),
-        el('p', { html: '<b>3D:</b> left-drag orbits · right-drag pans · wheel zooms · click selects · double-click frames the selection.<br><b>Draft:</b> middle or right-drag pans · wheel zooms · drag right-to-left for a crossing selection window.' }),
-        el('h3', { text: 'Typed coordinates (Draft)' }),
-        el('p', { html: 'While a drawing tool is active, type <code>50,30</code> for an absolute point, <code>@40,0</code> for a relative one, <code>@60&lt;30</code> for length and angle, or just <code>25</code> for a length along the cursor direction, then press Enter.' }),
-      ],
-      actions: [{ label: 'Close', primary: true }],
-    });
+  zenModeOrRedo(e) {
+    // Ctrl+Shift+Z is redo everywhere; the zen-mode binding lives on the menu.
+    void e;
+    store.redo();
   }
 
-  showWelcome() {
-    modal({
-      title: `${APP_NAME} ${APP_VERSION}`,
-      wide: true,
-      body: [
-        el('p', { html: 'A parametric CAD studio that runs entirely in your browser. Nothing is uploaded — your model lives in this tab and in the files you save.' }),
-        el('h3', { text: 'The three workspaces' }),
-        el('p', { html: '<b>Model</b> — parametric solids, booleans, patterns and mirrors in a rebuildable feature tree.<br><b>Draft</b> — 2D drafting with object snaps, layers, dimensions and DXF exchange. Any closed profile can be extruded or revolved into the model.<br><b>Simulate</b> — the fourth dimension: a timeline with keyframes, construction sequencing and rigid-body dynamics.' }),
-        el('h3', { text: 'Try this first' }),
-        el('p', { html: '1. Click a body, then edit its parameters on the right — try typing <code>plate_w*0.6</code> into a field.<br>2. Switch to <b>Draft</b>, draw a closed shape and press <b>Extrude</b>.<br>3. Switch to <b>Simulate</b> and press <b>Sequence</b> to watch the model assemble itself.' }),
-        el('h3', { text: 'Honest limits' }),
-        el('p', { html: 'TesserCAD is a mesh-based modeller, not a B-rep kernel: booleans work on triangle meshes, so there are no true fillets or chamfers on arbitrary edges, and very dense meshes make booleans slow. Dynamics use bounding-sphere collisions — right for drop tests and sequencing studies, not for stress analysis.' }),
-        el('p', { class: 'hint', html: `Free and open source. Lengths are stored in millimetres. Files are saved as <code>${FILE_EXT}</code> (plain JSON) and can be exported to STL, OBJ, glTF, PLY, DXF, SVG, CSV and PNG.` }),
-      ],
-      actions: [
-        { label: 'Keyboard shortcuts', run: () => setTimeout(() => this.showHelp(), 60) },
-        { label: 'Start modelling', primary: true },
-      ],
-    });
+  draftKey(e) {
+    if (e.key === 'F3') { e.preventDefault(); this.toggleDraft('snap'); return; }
+    if (e.key === 'F8') { e.preventDefault(); this.toggleDraft('ortho'); return; }
+    if (e.key === 'F9') { e.preventDefault(); this.toggleDraft('grid'); return; }
+    if (e.key === 'F10') { e.preventDefault(); this.toggleDraft('polar'); return; }
+    if (this.draft.pending.length && this.draft.typeKey(e.key)) { e.preventDefault(); return; }
+    if (e.key.toLowerCase() === 'c' && this.draft.pending.length >= 3) { this.draft.closeChain(); return; }
+    if (e.key.toLowerCase() === 'q') { e.preventDefault(); this.openQuickMenu(innerWidth / 2, innerHeight / 2); return; }
+    const tool = DRAW_TOOLS.find(t => t.key && t.key.toLowerCase() === e.key.toLowerCase());
+    if (tool) { e.preventDefault(); this.setDraftTool(tool.id); return; }
+    if (e.key === 'Enter') { this.draft._finishChain(); return; }
+    if (e.key.toLowerCase() === 'f') { e.preventDefault(); this.draft.zoomExtents(); }
   }
 }
 
-const WS_HINTS = {
-  model: 'Model — add solids, combine them, and drive every dimension from a parameter.',
-  draft: 'Draft — draw a 2D profile, then extrude or revolve it into the model.',
-  sim: 'Simulate — scrub the timeline, key poses, sequence the build or run the physics.',
-};
-
 function randomColour() {
-  const palette = ['#4da3ff', '#4ecb8b', '#ffb454', '#ff6b6b', '#b98cff', '#4fd0d8', '#f37ab5', '#a0d468'];
+  const palette = ['#4c9fff', '#46cf8b', '#ffb454', '#ff6b6b', '#b98cff', '#4fd0d8', '#f37ab5', '#a0d468'];
   return palette[Math.floor(Math.random() * palette.length)];
 }
 
 /* ------------------------------------------------------------------ go */
 
 const app = new App();
-window.tesserCAD = app;          // handy for the console and for automated checks
+window.tesserCAD = app;
 try {
   app.boot();
 } catch (err) {

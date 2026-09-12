@@ -3,7 +3,7 @@
  * selection. Numeric fields accept expressions, so every property in the
  * model can be driven by a named document parameter.
  */
-import { el, clear, section, field, checkbox, select, kv, promptDialog } from './shell.js';
+import { el, clear, section, field, checkbox, select, segmented, kv, promptDialog, icon, emptyState, scrubNumber } from './shell.js';
 import { store, catalogOf, MATERIALS, UNITS, uid, toDisplay, fromDisplay } from '../core/doc.js';
 import { tryEval } from '../core/expr.js';
 import { massProperties } from '../core/rebuild.js';
@@ -58,11 +58,14 @@ function exprInput(value, scope, onCommit, { unit = null, hint = true } = {}) {
 }
 
 function vecRow(label, values, scope, onCommit, unit) {
-  const box = el('div', { class: 'triplet' });
-  ['x', 'y', 'z'].forEach((ax, i) => {
+  const box = el('div', { class: 'triplet-axis' });
+  ['X', 'Y', 'Z'].forEach((ax, i) => {
     const w = exprInput(values[i], scope, (v) => { const next = [...values]; next[i] = v; onCommit(next); }, { unit, hint: false });
-    w.firstChild.title = `${label} ${ax.toUpperCase()}`;
-    box.appendChild(w);
+    w.firstChild.title = `${label} ${ax} — accepts an expression`;
+    box.appendChild(el('div', { class: 'axis-field' }, [
+      el('span', { class: 'axis-label', dataset: { axis: ax }, text: ax }),
+      w,
+    ]));
   });
   return field(label, box);
 }
@@ -112,10 +115,10 @@ function renderModel(app, host) {
       checkbox('Suppress (skip this feature)', f.suppressed, (v) => {
         store.edit('Suppress feature', () => { store.feature(f.id).suppressed = v; });
       }),
-    ]));
+    ], true, { icon: 'doc-props' }));
 
     if (cat.fields.length) {
-      host.appendChild(section('Parameters', cat.fields.map(fld => paramField(app, f, fld, scope))));
+      host.appendChild(section('Parameters', cat.fields.map(fld => paramField(app, f, fld, scope)), true, { icon: 'settings' }));
     }
 
     if (f.type === 'extrude' || f.type === 'revolve') {
@@ -134,7 +137,7 @@ function renderModel(app, host) {
           el('button', { class: 'btn', text: 'Show in Draft', onclick: () => app.showProfile(f.id) }),
         ]),
         el('div', { class: 'hint', text: 'Select closed geometry in the Draft workspace, then link it here. Editing the drawing rebuilds the solid.' }),
-      ]));
+      ], true, { icon: 'profile-link' }));
     }
 
     host.appendChild(section('Transform', [
@@ -148,10 +151,10 @@ function renderModel(app, host) {
             t.pos = [0, 0, 0]; t.rot = [0, 0, 0]; t.scale = [1, 1, 1];
           });
         } }),
-        el('button', { class: 'btn sm', text: 'Drop to floor', onclick: () => app.dropToFloor(f.id) }),
-        el('button', { class: 'btn sm', text: 'Centre on origin', onclick: () => app.centreOnOrigin(f.id) }),
+        el('button', { class: 'btn sm', text: 'Drop to floor', onclick: () => app.dropSelection() }),
+        el('button', { class: 'btn sm', text: 'Centre on origin', onclick: () => app.centreSelection() }),
       ]),
-    ]));
+    ], true, { icon: 'move' }));
 
     host.appendChild(section('Appearance', [
       field('Material', select(f.material, Object.entries(MATERIALS).map(([k, m]) => [k, m.name]), (v) => {
@@ -185,10 +188,10 @@ function renderModel(app, host) {
         store.quiet(() => { store.feature(f.id).appearance.roughness = v; });
         app.vp.refreshMaterials();
       }),
-    ], false));
+    ], false, { icon: 'palette' }));
 
     if (res && !res.error && res.instances.length) {
-      host.appendChild(section('Mass properties', [massPanel(f, res)], false));
+      host.appendChild(section('Mass properties', [massPanel(f, res)], false, { icon: 'mass' }));
     }
 
     host.appendChild(el('div', { class: 'btn-row', style: { marginBottom: '12px' } }, [
@@ -196,10 +199,8 @@ function renderModel(app, host) {
       el('button', { class: 'btn danger', text: 'Delete', onclick: () => app.deleteSelection() }),
     ]));
   } else if (!ids.length) {
-    host.appendChild(el('div', { class: 'empty-note' }, [
-      el('b', { text: 'Nothing selected' }),
-      el('span', { text: 'Click a body in the viewport or a row in the feature tree.' }),
-    ]));
+    host.appendChild(emptyState('Nothing selected',
+      'Click a body in the viewport or a row in the feature tree. Press <kbd>Ctrl K</kbd> for every command.', 'target'));
   }
 
   host.appendChild(paramsSection(app, scope));
@@ -322,7 +323,7 @@ function paramsSection(app, scope) {
   }));
   rows.push(el('div', { class: 'hint', html: 'Operators <code>+ - * / % ^</code> and functions <code>sin cos tan sqrt abs min max round deg rad clamp lerp</code>. Angles in trig functions are radians — use <code>rad(30)</code>.' }));
 
-  return section(`Parameters (${doc.params.length})`, rows, doc.params.length > 0);
+  return section('Parameters', rows, doc.params.length > 0, { icon: 'book', badge: doc.params.length });
 }
 
 function documentSection(app) {
@@ -338,7 +339,7 @@ function documentSection(app) {
       return i;
     })()),
     el('div', { class: 'hint', text: 'Lengths are stored in millimetres. Changing units only changes how values are displayed and exported.' }),
-  ], false);
+  ], false, { icon: 'doc-props' });
 }
 
 function viewSection(app) {
@@ -348,12 +349,13 @@ function viewSection(app) {
     app.applyView();
   };
   return section('View', [
-    field('Shading', select(v.shading, [
-      ['shaded-edges', 'Shaded with edges'], ['shaded', 'Shaded'], ['wire', 'Wireframe'], ['xray', 'X-ray'],
-    ], (val) => { set('shading', val); app.refreshBodies(true); })),
-    field('Background', select(v.bg, [
-      ['studio', 'Studio'], ['graphite', 'Graphite'], ['white', 'Paper'], ['blueprint', 'Blueprint'],
-    ], (val) => set('bg', val))),
+    field('Shading', segmented(v.shading, [
+      ['shaded-edges', 'Edges', 'shade-edges'], ['shaded', 'Solid', 'shade-solid'],
+      ['wire', 'Wire', 'shade-wire'], ['xray', 'X-ray', 'shade-xray'],
+    ], (val) => app.setShading(val), { icons: true })),
+    field('Background', segmented(v.bg, [
+      ['studio', 'Studio'], ['graphite', 'Graphite'], ['white', 'Paper'], ['blueprint', 'Blue'],
+    ], (val) => app.setBackground(val))),
     checkbox('Grid', v.grid, (val) => set('grid', val)),
     checkbox('World axes', v.axes, (val) => set('axes', val)),
     checkbox('Shadow ground', v.ground, (val) => set('ground', val)),
@@ -381,7 +383,7 @@ function viewSection(app) {
       store.edit('Section', (d) => { d.view.clip.flip = val; }, { rebuild: false });
       app.applyView();
     }),
-  ], false);
+  ], false, { icon: 'camera' });
 }
 
 function statsSection(app) {
@@ -395,7 +397,8 @@ function statsSection(app) {
     ['Total mass', `${fmt(s.mass, 4)} kg`],
     ['Overall size', size ? `${fmt(toDisplay(size.x, u))} × ${fmt(toDisplay(size.y, u))} × ${fmt(toDisplay(size.z, u))} ${u}` : '–'],
     ['Centre of mass', s.bodies ? `${fmt(s.centroid.x)}, ${fmt(s.centroid.y)}, ${fmt(s.centroid.z)}` : '–'],
-  ])], false);
+  ]), el('button', { class: 'btn sm', onclick: () => app.showMassReport() }, [icon('mass', { size: 13 }), 'Full report'])],
+  false, { icon: 'gauge' });
 }
 
 /* ==================================================================
@@ -420,7 +423,7 @@ function renderDraft(app, host) {
     el('div', { class: 'hint', text: 'Snap markers: □ endpoint · △ midpoint · ○ centre · ◇ quadrant · ✕ intersection' }),
     el('div', {}, ['end', 'mid', 'center', 'quad', 'intersect', 'near', 'grid'].map(k =>
       checkbox(k, d.snap.kinds.has(k), (v) => { v ? d.snap.kinds.add(k) : d.snap.kinds.delete(k); d.invalidate(); }))),
-  ]));
+  ], true, { icon: 'magnet' }));
 
   host.appendChild(section('Tool settings', [
     field('Polygon sides', (() => {
@@ -434,7 +437,7 @@ function renderDraft(app, host) {
       return i;
     })()),
     el('div', { class: 'hint', html: 'While drawing you can type exact input: <code>50,30</code> absolute · <code>@40,0</code> relative · <code>@60&lt;30</code> length &amp; angle · <code>25</code> length along the cursor direction. Press Enter to apply.' }),
-  ], false));
+  ], false, { icon: 'settings' }));
 
   if (sel.length) {
     host.appendChild(section(`Selection (${sel.length})`, [
@@ -460,10 +463,10 @@ function renderDraft(app, host) {
     host.appendChild(section('Make a solid', [
       el('div', { class: 'hint', text: 'Turn the selected closed geometry into a 3D feature.' }),
       el('div', { class: 'btn-row' }, [
-        el('button', { class: 'btn primary', text: 'Extrude →', onclick: () => app.createFromProfile('extrude') }),
-        el('button', { class: 'btn', text: 'Revolve →', onclick: () => app.createFromProfile('revolve') }),
+        el('button', { class: 'btn primary', onclick: () => app.createFromProfile('extrude') }, [icon('extrude', { size: 14 }), 'Extrude']),
+        el('button', { class: 'btn', onclick: () => app.createFromProfile('revolve') }, [icon('revolve', { size: 14 }), 'Revolve']),
       ]),
-    ]));
+    ], true, { icon: 'cube3d' }));
   }
 
   host.appendChild(section('Drawing exchange', [
@@ -473,7 +476,7 @@ function renderDraft(app, host) {
       el('button', { class: 'btn sm', text: 'Import DXF', onclick: () => app.run('file.import') }),
     ]),
     el('div', { class: 'hint', text: 'DXF is written as AutoCAD R12, which every CAD and CAM package can read.' }),
-  ], false));
+  ], false, { icon: 'file-export' }));
 }
 
 function entityFields(app, e) {
@@ -585,11 +588,11 @@ function renderSim(app, host) {
       store.edit('Frame rate', (d) => { d.sim.fps = parseInt(v, 10); }, { rebuild: false });
       app.refreshUI();
     })),
-    field('Playback speed', select(String(sim.speed), [['0.1', '0.1×'], ['0.25', '0.25×'], ['0.5', '0.5×'], ['1', '1×'], ['2', '2×'], ['4', '4×']], (v) => {
+    field('Speed', select(String(sim.speed), [['0.1', '0.1×'], ['0.25', '0.25×'], ['0.5', '0.5×'], ['1', '1×'], ['2', '2×'], ['4', '4×']], (v) => {
       store.quiet((d) => { d.sim.speed = parseFloat(v); });
     })),
     checkbox('Loop playback', sim.loop, (v) => store.quiet((d) => { d.sim.loop = v; })),
-  ]));
+  ], true, { icon: 'timeline' }));
 
   /* ---- construction schedule ---- */
   const schedRows = [
@@ -617,7 +620,7 @@ function renderSim(app, host) {
     schedRows.push(field('Duration (s)', numField(item.dur ?? 1, 0.05, 3600, 0.1, (v) => setSched(app, f.id, { dur: v }))));
     schedRows.push(field('Appear as', select(item.mode || 'grow', SCHEDULE_MODES, (v) => setSched(app, f.id, { mode: v }))));
   }
-  host.appendChild(section('Build sequence (4D)', schedRows, sim.schedule.enabled));
+  host.appendChild(section('Build sequence (4D)', schedRows, sim.schedule.enabled, { icon: 'sequence' }));
 
   /* ---- keyframes ---- */
   if (f) {
@@ -700,21 +703,18 @@ function renderSim(app, host) {
       dynRows.push(el('div', { class: 'hint', text: 'Motors are analytic drivers — they run exactly on schedule regardless of forces, which is what you want for mechanisms.' }));
     }
   }
-  host.appendChild(section('Dynamics', dynRows, dyn.enabled));
+  host.appendChild(section('Dynamics', dynRows, dyn.enabled, { icon: 'physics' }));
 
   host.appendChild(section('Export the simulation', [
     el('div', { class: 'btn-row' }, [
-      el('button', { class: 'btn primary', text: '● Record video', onclick: () => app.run('sim.record') }),
-      el('button', { class: 'btn', text: 'Snapshot PNG', onclick: () => app.run('export.png') }),
+      el('button', { class: 'btn primary', onclick: () => app.run('sim.record') }, [icon('record', { size: 14 }), 'Record video']),
+      el('button', { class: 'btn', onclick: () => app.run('export.png') }, [icon('image', { size: 14 }), 'Snapshot']),
     ]),
     el('div', { class: 'hint', text: 'Recording replays the timeline frame by frame and saves a WebM video using your browser’s own encoder.' }),
-  ], false));
+  ], false, { icon: 'file-export' }));
 
   if (!f) {
-    host.appendChild(el('div', { class: 'empty-note' }, [
-      el('b', { text: 'Select a body' }),
-      el('span', { text: 'Pick a body to give it keyframes, a build slot or physics.' }),
-    ]));
+    host.appendChild(emptyState('Select a body', 'Pick a body to give it keyframes, a build slot or physics.', 'target'));
   }
 }
 

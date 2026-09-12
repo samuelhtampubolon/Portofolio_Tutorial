@@ -2,6 +2,7 @@
 
 A walkthrough of the three workspaces, written so you can follow along in the app.
 
+- [0. The interface](#0-the-interface)
 - [1. The basics](#1-the-basics)
 - [2. Model — parametric solids](#2-model--parametric-solids)
 - [3. Draft — 2D drawing](#3-draft--2d-drawing)
@@ -9,6 +10,74 @@ A walkthrough of the three workspaces, written so you can follow along in the ap
 - [5. Files and exchange](#5-files-and-exchange)
 - [6. Keyboard reference](#6-keyboard-reference)
 - [7. Worked examples](#7-worked-examples)
+
+---
+
+## 0. The interface
+
+**Menu bar.** Eleven menus across the top: File, Edit, Create, Modify, View, Measure, Draft,
+Simulate, Export, Window, Help. Submenus open on hover, toggles show a checkmark, and anything
+that doesn't apply right now is greyed rather than hidden — so you can always see that it
+exists and work out why it is unavailable.
+
+**Ribbon.** The second row is a contextual toolbar that changes with the workspace, grouped and
+labelled (Create, Combine, Repeat, Transform…). It scrolls sideways when the window is narrow.
+
+**Command palette — `Ctrl K`.** Ranked fuzzy search over all 167 commands. Your recent commands
+appear first when the box is empty. This is the fastest way to reach anything you haven't
+memorised a shortcut for.
+
+**Quick menu — `Q`.** Eight numbered favourites at the cursor, different in each workspace.
+Press `Q` then `1`–`8` without moving the mouse.
+
+**Context menus.** Right-click a body in the viewport, or a row in the feature tree, for exactly
+the operations that apply to it.
+
+**Panels.** `T` toggles the left outline panel, `N` the right properties panel. Both collapse
+to give the viewport the whole window; on a phone they slide in from tabs at the screen edges.
+
+**Status bar.** The left side tells you what the current tool wants next. The right side shows
+the live mouse-button map for the workspace you are in, the selection count, the units and the
+model statistics including how long the last rebuild took.
+
+**Learning card.** A small checklist in the corner of the viewport tracks the eight things
+worth trying first and ticks them off as you do them. Close it with its ✕, or bring it back
+from **Help → Show the learning card**.
+
+**Preferences — `Ctrl ,`.** Theme, gizmo size, snap increment, edge-display angle, autosave
+interval and whether deletes ask first. Stored in the browser, not in the document.
+
+### Modal transform operators
+
+This is the fastest way to move anything, and it is worth learning first.
+
+1. Select a body.
+2. Press **`G`** (move), **`R`** (rotate) or **`S`** (scale). The selection now follows the pointer.
+3. Optionally press **`X`**, **`Y`** or **`Z`** to lock to that axis — press the same key again
+   to unlock, or **`⇧X`** to lock the *plane* perpendicular to X instead.
+4. Optionally **type a number** for an exact value — `G` `X` `25` `⏎` moves exactly 25 mm in X.
+5. Hold **`⇧`** for precision (a tenth of the movement) or **`Ctrl`** to snap to the increment
+   set in preferences.
+6. **`⏎`** or a click confirms. **`esc`** cancels and puts everything back exactly as it was.
+
+A readout above the viewport shows the live value and the keys available at each moment. The
+result is written into the feature's transform, so it stays parametric and undoable.
+
+### Starter templates
+
+**File → New from template** offers six documents, and every one is a working parametric model
+rather than a picture:
+
+| Template | What it demonstrates |
+|---|---|
+| Blank document | An empty model with millimetres and one example parameter |
+| Bolted plate | A rounded plate with a parametric 2×2 bolt pattern cut through it |
+| Flanged pipe | Two flanges unioned onto a tube, then a bore and two bolt rings subtracted |
+| Enclosure shell | A hollow box made by subtracting an inset copy of itself |
+| Stepped shaft | Three concentric diameters driven by one length parameter |
+| 4D build sequence | A stack of floors pre-sequenced on the timeline — press play |
+
+Open one and change its parameters; that is the quickest way to see what a feature history does.
 
 ---
 
@@ -30,7 +99,7 @@ plain JSON.
 **Undo.** `Ctrl`+`Z` / `Ctrl`+`Shift`+`Z`, 120 steps deep, covering everything: geometry,
 drawing, parameters, animation and view settings.
 
-**Command palette.** `Ctrl`+`K` finds any of the 69 commands by fuzzy name. If you cannot
+**Command palette.** `Ctrl`+`K` finds any of the 167 commands by fuzzy name. If you cannot
 find a button, look here first.
 
 ### Navigating the 3D view
@@ -113,12 +182,24 @@ almost nothing in memory.
 
 ### Moving things
 
-Use the **Move / Rotate / Scale** gizmo (`G` / `R` / `T`), or type exact numbers into the
-Transform section. The transform fields accept expressions too, so a boss can sit at
+Three ways, in rough order of speed:
+
+1. **Modal operators** — `G`, `R`, `S`, described in [section 0](#0-the-interface). Fastest.
+2. **Gizmos** — `W` for move, `⇧E` rotate, `⇧R` scale. Best when you want to drag along a
+   visible handle.
+3. **Typing into the Transform section** on the right, which also accepts expressions. The transform fields accept expressions too, so a boss can sit at
 `plate_h + boss_h/2` and follow the plate when it gets thicker.
 
-Two helpers worth knowing: **Drop to floor** sits the body on Z = 0, and **Centre on origin**
-moves its bounding-box centre to the world origin.
+Helpers worth knowing: **Drop to floor** (`D`) sits the body on Z = 0, **Centre on origin**
+moves its bounding-box centre to the world origin, **Align on X/Y/Z** brings several bodies to a
+shared centre on that axis, and **Distribute evenly** spaces three or more bodies along whichever
+axis they already span most.
+
+### Seeing only what you need
+
+**Isolate** (`/`) hides everything except the selection and shows a banner until you press `/`
+again. **Hide** (`H`) hides the selection; **`Alt H`** shows everything. All three are
+non-destructive and independent of a feature's suppressed state.
 
 ### Reading the model
 
@@ -342,11 +423,17 @@ Drag a file onto the viewport, or use **File → Import**:
 | | |
 |---|---|
 | `Ctrl`+`K` | command palette |
-| `Ctrl`+`S` / `Ctrl`+`O` / `Ctrl`+`N` | save / open / new |
-| `Ctrl`+`Z` / `Ctrl`+`Shift`+`Z` | undo / redo |
+| `Q` | quick menu |
+| `Ctrl`+`S` / `Ctrl`+`⇧`+`S` | save / save as |
+| `Ctrl`+`O` / `Ctrl`+`N` / `Ctrl`+`I` | open / new / import |
+| `Ctrl`+`Z` / `Ctrl`+`⇧`+`Z` | undo / redo |
+| `Ctrl`+`⇧`+`H` | undo history browser |
 | `Ctrl`+`D` | duplicate |
-| `Ctrl`+`A` | select all |
+| `Ctrl`+`A` / `Alt`+`A` / `Ctrl`+`⇧`+`I` | select all / none / invert |
 | `Del` | delete selection |
+| `F2` | rename |
+| `Ctrl`+`,` | preferences |
+| `T` / `N` | toggle left / right panel |
 | `Esc` | cancel, then deselect |
 | `F1` | this help |
 
@@ -354,11 +441,16 @@ Drag a file onto the viewport, or use **File → Import**:
 
 | | |
 |---|---|
-| `G` / `R` / `T` | move / rotate / scale gizmo |
-| `F` | zoom to fit |
-| `O` | orthographic camera |
-| `1`–`6` | front, back, right, left, top, bottom |
+| `G` / `R` / `S` | modal move / rotate / scale |
+| `W` / `⇧E` / `⇧R` | move / rotate / scale gizmo |
+| `F` / `⇧F` | zoom to fit / to selection |
+| `5` | orthographic camera |
+| `1` / `3` / `7` | front / right / top (add `⇧` for the opposite) |
 | `0` | isometric |
+| `Z` | cycle shading mode |
+| `H` / `Alt`+`H` / `/` | hide / show all / isolate |
+| `D` | drop to floor |
+| `M` | measure distance |
 | `Space` | play / pause the timeline |
 | `,` / `.` | step one frame |
 | `Home` / `End` | timeline start / end |
@@ -372,6 +464,8 @@ Drag a file onto the viewport, or use **File → Import**:
 | `F3` / `F8` / `F10` | object snap / ortho / polar tracking |
 | `Enter` | finish a polyline or spline |
 | `C` | close a polyline |
+| `F9` | snap to grid |
+| `F` | zoom drawing extents |
 
 ---
 

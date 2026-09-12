@@ -6,6 +6,7 @@
 <title>TesserCAD — Web 3D/4D CAD Studio</title>
 <meta name="description" content="TesserCAD is a free, open-source, browser-based CAD studio: parametric 3D solid modelling, 2D drafting, and 4D (3D + time) simulation. No install, no account, runs entirely on your machine.">
 <meta name="color-scheme" content="dark light">
+<meta name="theme-color" content="#0d1117">
 <meta property="og:title" content="TesserCAD — Web 3D/4D CAD Studio">
 <meta property="og:description" content="Parametric 3D modelling, 2D drafting and 4D time simulation in the browser. Free and open source.">
 <meta property="og:type" content="website">
@@ -26,44 +27,34 @@
   <div class="boot-card">
     <svg class="boot-mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><path d="M32 6 56 19v26L32 58 8 45V19z"/><path d="M32 20 44 26.5v13L32 46l-12-6.5v-13z"/><path d="M32 6v14M56 19 44 26.5M56 45 44 39.5M32 58V46M8 45l12-5.5M8 19l12 7.5"/></g></svg>
     <div class="boot-name">TesserCAD</div>
-    <div class="boot-sub" id="bootMsg">Loading engine…</div>
+    <div class="boot-sub" id="bootMsg">Starting the geometry engine…</div>
+    <div class="boot-bar"><i></i></div>
   </div>
 </div>
 
 <header id="topbar">
   <div class="brand">
-    <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3" stroke-linejoin="round"><path d="M32 6 56 19v26L32 58 8 45V19z"/><path d="M32 20 44 26.5v13L32 46l-12-6.5v-13z"/><path d="M32 6v14M56 19 44 26.5M56 45 44 39.5M32 58V46M8 45l12-5.5M8 19l12 7.5"/></g></svg>
+    <svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="3.4" stroke-linejoin="round"><path d="M32 6 56 19v26L32 58 8 45V19z"/><path d="M32 20 44 26.5v13L32 46l-12-6.5v-13z"/><path d="M32 6v14M56 19 44 26.5M56 45 44 39.5M32 58V46M8 45l12-5.5M8 19l12 7.5"/></g></svg>
     <span class="brand-name">TesserCAD</span>
   </div>
 
-  <nav class="menubar" id="menubar"></nav>
+  <nav class="menubar" id="menubar" aria-label="Main menu"></nav>
 
-  <div class="doc-title">
-    <input id="docName" value="Untitled" spellcheck="false" aria-label="Document name">
-    <span class="doc-dirty" id="docDirty" title="Unsaved changes"></span>
-  </div>
+  <span class="top-spacer"></span>
+  <div class="workspaces" id="workspaces" role="tablist" aria-label="Workspace"></div>
+  <span class="top-spacer"></span>
 
-  <div class="workspaces" role="tablist" aria-label="Workspace">
-    <button class="ws" data-ws="model" role="tab" aria-selected="true">Model</button>
-    <button class="ws" data-ws="draft" role="tab" aria-selected="false">Draft</button>
-    <button class="ws" data-ws="sim" role="tab" aria-selected="false">Simulate</button>
-  </div>
-
-  <div class="top-actions">
-    <button class="icon-btn" id="btnUndo" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
-    <button class="icon-btn" id="btnRedo" title="Redo (Ctrl+Shift+Z)" aria-label="Redo">↷</button>
-    <button class="icon-btn" id="btnTheme" title="Toggle theme" aria-label="Toggle theme">◐</button>
-    <button class="icon-btn" id="btnHelp" title="Help &amp; shortcuts (F1)" aria-label="Help">?</button>
-  </div>
+  <div class="doc-chip" id="docChip"></div>
+  <div class="top-actions" id="topActions"></div>
 </header>
 
-<div id="toolbar"></div>
+<div id="ribbon" role="toolbar" aria-label="Tools"></div>
 
 <main id="workarea">
-  <aside id="leftpanel" class="panel">
+  <aside id="leftpanel" class="panel" aria-label="Outline">
     <div class="panel-head">
-      <span id="leftTitle">Feature tree</span>
-      <button class="mini-btn" id="btnCollapseLeft" title="Collapse panel">‹</button>
+      <span class="ph-title" id="leftTitle">Feature tree</span>
+      <span class="ph-actions" id="leftActions"></span>
     </div>
     <div class="panel-body" id="leftBody"></div>
   </aside>
@@ -73,36 +64,40 @@
     <canvas id="viewport2d" hidden></canvas>
 
     <div id="viewcube" class="overlay-tl"></div>
-    <div id="viewInfo" class="overlay-bl"></div>
+    <div id="viewInfo" class="overlay-bl glass"></div>
     <div id="axisHint" class="overlay-br"></div>
-    <div id="hud" class="overlay-tr"></div>
+    <div id="hud" class="overlay-tr glass"></div>
+    <div id="opHud" hidden></div>
+    <div id="learnCard" class="glass" hidden></div>
     <div id="draftHint" class="draft-hint" hidden></div>
 
-    <button id="mobLeft" class="edge-tab left" aria-label="Show the feature tree" title="Feature tree">☰</button>
-    <button id="mobRight" class="edge-tab right" aria-label="Show properties" title="Properties">⚙</button>
+    <button id="mobLeft" class="edge-tab left" aria-label="Show the outline panel" title="Outline"></button>
+    <button id="mobRight" class="edge-tab right" aria-label="Show the properties panel" title="Properties"></button>
   </section>
 
-  <aside id="rightpanel" class="panel">
+  <aside id="rightpanel" class="panel" aria-label="Properties">
     <div class="panel-head">
-      <span id="rightTitle">Properties</span>
-      <button class="mini-btn" id="btnCollapseRight" title="Collapse panel">›</button>
+      <span class="ph-title" id="rightTitle">Properties</span>
+      <span class="ph-actions" id="rightActions"></span>
     </div>
     <div class="panel-body" id="rightBody"></div>
   </aside>
 </main>
 
-<section id="timeline" hidden></section>
+<section id="timeline" hidden aria-label="Timeline"></section>
 
 <footer id="statusbar">
   <span id="statusMsg">Ready</span>
   <span class="sp"></span>
+  <span class="sb-keys" id="statusKeys"></span>
   <span id="statusCoords" class="mono"></span>
-  <span id="statusUnits" class="mono"></span>
+  <span id="statusSel" class="sb-item"></span>
+  <span id="statusUnits" class="sb-item"></span>
   <span id="statusStats" class="mono"></span>
 </footer>
 
 <div id="modalRoot"></div>
-<div id="toastRoot"></div>
+<div id="toastRoot" aria-live="polite"></div>
 <div id="paletteRoot" hidden></div>
 <input type="file" id="fileInput" hidden>
 
@@ -114,10 +109,7 @@
   import('./src/main.js').catch(err => {
     console.error(err);
     const m = document.getElementById('bootMsg');
-    if (m) {
-      m.textContent = 'Failed to load: ' + err.message;
-      m.style.color = '#ff6b6b';
-    }
+    if (m) { m.textContent = 'Failed to load: ' + err.message; m.style.color = '#ff6b6b'; }
   });
 </script>
 </body>
