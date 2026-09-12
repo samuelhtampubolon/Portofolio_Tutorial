@@ -130,6 +130,16 @@ function readTriangles(geometry, matrix) {
  * a position rather than an index.
  */
 function segment(tris, smoothAngleDeg, tol = 1e-4) {
+  const { patches } = segmentWithIds(tris, smoothAngleDeg, tol);
+  return patches;
+}
+
+/**
+ * The same flood fill, but also returning which patch each triangle landed in
+ * and the edge adjacency it was built from. Drawing generation needs those to
+ * find the real edges of the model.
+ */
+function segmentWithIds(tris, smoothAngleDeg, tol = 1e-4) {
   const cosLimit = Math.cos(smoothAngleDeg * DEG);
   const key = (v) => `${Math.round(v.x / tol)},${Math.round(v.y / tol)},${Math.round(v.z / tol)}`;
 
@@ -143,13 +153,14 @@ function segment(tris, smoothAngleDeg, tol = 1e-4) {
     }
   });
 
-  const seen = new Uint8Array(tris.length);
-  const out = [];
+  const patchOf = new Int32Array(tris.length).fill(-1);
+  const patches = [];
   for (let i = 0; i < tris.length; i++) {
-    if (seen[i]) continue;
+    if (patchOf[i] >= 0) continue;
+    const id = patches.length;
     const stack = [i];
     const patch = [];
-    seen[i] = 1;
+    patchOf[i] = id;
     while (stack.length) {
       const j = stack.pop();
       patch.push(tris[j]);
@@ -157,17 +168,147 @@ function segment(tris, smoothAngleDeg, tol = 1e-4) {
         const p = key(tris[j].v[e]), q = key(tris[j].v[(e + 1) % 3]);
         const k = p < q ? `${p}|${q}` : `${q}|${p}`;
         for (const m of byEdge.get(k) || []) {
-          if (seen[m]) continue;
+          if (patchOf[m] >= 0) continue;
           // A crease ends the patch. This is the whole of the segmentation.
           if (tris[j].n.dot(tris[m].n) < cosLimit) continue;
-          seen[m] = 1;
+          patchOf[m] = id;
           stack.push(m);
         }
       }
     }
-    out.push(patch);
+    patches.push(patch);
+  }
+  return { patches, patchOf, byEdge, key };
+}
+
+/**
+ * The real edges of a model: the boundaries between surface patches.
+ *
+ * A drawing needs the edges a person would draw, and a dihedral-angle test on
+ * raw triangles does not give them. The boolean engine triangulates a flat face
+ * into many triangles with T-junctions and the occasional sliver, and a sliver's
+ * normal is numerically unreliable, so an angle test invents creases in the
+ * middle of a flat face. Drawn, those appear as streaks across the part.
+ *
+ * Patch boundaries have no such problem. A triangle joins its neighbour's patch
+ * only across a smooth edge, so an edge between two different patches is a real
+ * edge of the model and an edge inside one patch never is, however noisy that
+ * individual triangle's normal happens to be.
+ */
+export function patchEdges(geometry, matrix = null, { smoothAngle = 25 } = {}) {
+  const all = readTriangles(geometry, matrix);
+  if (!all.length) return [];
+  // Slivers first. A triangle of near-zero area has a numerically meaningless
+  // normal, and a boolean leaves plenty of them; left in, they invent edges.
+  const total = all.reduce((s2, t) => s2 + t.area, 0);
+  const tris = all.filter(t => t.area > Math.max(1e-9, total * 1e-8));
+  if (!tris.length) return [];
+  const cosLimit = Math.cos(smoothAngle * DEG);
+  const { byEdge, key } = segmentWithIds(tris, smoothAngle);
+
+  // Is this a closed solid or an open sheet? It decides what a single-owner
+  // edge means. On a closed solid every edge has two faces, so one owner is
+  // always a T-junction and never a boundary; on an open sheet it may be a real
+  // boundary worth drawing. Signed volume against area^1.5 separates the two
+  // cleanly: a solid encloses a volume comparable to its size cubed, a sheet
+  // encloses essentially none.
+  let vol6 = 0, area = 0;
+  for (const t of tris) {
+    area += t.area;
+    vol6 += t.v[0].dot(new THREE.Vector3().crossVectors(t.v[1], t.v[2]));
+  }
+  const closed = Math.abs(vol6 / 6) > Math.pow(Math.max(1e-9, area), 1.5) * 1e-4;
+
+  // Triangles grouped by the plane they lie in, for the T-junction test below.
+  const byPlane = new Map();
+  /**
+   * A plane key with its sign normalised. Winding is not consistent across a
+   * boolean's retriangulation, so the same physical plane appears with both
+   * normals; keyed by the signed normal those land in different buckets and a
+   * triangle cannot see the neighbour that covers it.
+   */
+  const planeKey = (t) => {
+    let { x, y, z } = t.n;
+    if (x < -1e-9 || (Math.abs(x) <= 1e-9 && (y < -1e-9 || (Math.abs(y) <= 1e-9 && z < 0)))) { x = -x; y = -y; z = -z; }
+    const off = x * t.v[0].x + y * t.v[0].y + z * t.v[0].z;
+    return `${Math.round(x * 400)},${Math.round(y * 400)},${Math.round(z * 400)}|${Math.round(off * 50)}`;
+  };
+  tris.forEach((t, i) => {
+    const k = planeKey(t);
+    if (!byPlane.has(k)) byPlane.set(k, []);
+    byPlane.get(k).push(i);
+  });
+
+  const out = [];
+  const emitted = new Set();
+  const mid = new THREE.Vector3();
+
+  for (let i = 0; i < tris.length; i++) {
+    for (let e = 0; e < 3; e++) {
+      const p = tris[i].v[e], q = tris[i].v[(e + 1) % 3];
+      const kp = key(p), kq = key(q);
+      const k = kp < kq ? `${kp}|${kq}` : `${kq}|${kp}`;
+      if (emitted.has(k)) continue;
+      const owners = byEdge.get(k) || [];
+
+      let real;
+      if (owners.length >= 2) {
+        // The direct test: do the faces either side actually turn? Patch
+        // membership cannot answer this, because a T-junction breaks edge
+        // connectivity and splits one flat face into several patches, making
+        // every fragment boundary look like an edge of the model.
+        // The absolute value matters. A boolean's retriangulation of a flat
+        // face does not keep winding consistent, so two coplanar neighbours can
+        // have exactly opposite normals. A signed test reads that as a 180
+        // degree crease and draws a diagonal streak across the face; the
+        // unsigned test sees them for what they are, coplanar.
+        real = owners.some(o => Math.abs(tris[owners[0]].n.dot(tris[o].n)) < cosLimit);
+      } else if (closed) {
+        // A closed solid has two faces at every edge, so one owner is a
+        // T-junction by construction: a neighbour's vertex landed partway along
+        // this edge and the two never matched. Drawing these is what put long
+        // diagonal streaks across every flat face of the part.
+        real = false;
+      } else {
+        // On an open mesh a single owner may be a real boundary. It is only
+        // interior if another coplanar triangle covers the edge's midpoint.
+        mid.addVectors(p, q).multiplyScalar(0.5);
+        real = !coveredInPlane(mid, tris, byPlane.get(planeKey(tris[i])) || [], i);
+      }
+      if (!real) continue;
+      emitted.add(k);
+      out.push({ a: p.clone(), b: q.clone() });
+    }
   }
   return out;
+}
+
+/** Does any coplanar triangle other than `skip` contain this point? */
+function coveredInPlane(point, tris, candidates, skip, tol = 1e-6) {
+  for (const j of candidates) {
+    if (j === skip) continue;
+    const t = tris[j];
+    if (pointInTriangle(point, t.v[0], t.v[1], t.v[2], t.n, tol)) return true;
+  }
+  return false;
+}
+
+function pointInTriangle(p, a, b, c, n, tol) {
+  // Barycentric, done in the triangle's own plane by dropping the largest
+  // component of the normal, which is the standard way to avoid a degenerate
+  // projection.
+  const ax = Math.abs(n.x), ay = Math.abs(n.y), az = Math.abs(n.z);
+  let i0 = 0, i1 = 1;
+  if (ax >= ay && ax >= az) { i0 = 1; i1 = 2; }
+  else if (ay >= az) { i0 = 0; i1 = 2; }
+  const g = (v) => [v.getComponent(i0), v.getComponent(i1)];
+  const [px, py] = g(p), [axx, ayy] = g(a), [bx, by] = g(b), [cx, cy] = g(c);
+  const d = (by - cy) * (axx - cx) + (cx - bx) * (ayy - cy);
+  if (Math.abs(d) < 1e-14) return false;
+  const l1 = ((by - cy) * (px - cx) + (cx - bx) * (py - cy)) / d;
+  const l2 = ((cy - ayy) * (px - cx) + (axx - cx) * (py - cy)) / d;
+  const l3 = 1 - l1 - l2;
+  return l1 >= -tol && l2 >= -tol && l3 >= -tol;
 }
 
 /** The angular spread of a patch's normals, in radians. */
