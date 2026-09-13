@@ -30,8 +30,22 @@ await page.waitForFunction(() => window.tesserCAD?.build, null, { timeout: 25000
 await page.evaluate(() => document.querySelectorAll('.tour, .learn-card, #tourCard').forEach(n => n.remove()));
 
 /* ---- the offline copy installs itself ---- */
-await page.waitForFunction(async () => (await import('/src/intel/offline.js')).status().then(s => s.controlled), null, { timeout: 20000 })
-  .catch(() => {});
+
+// Wait for the cache to be *populated*, not merely for the worker to be in
+// control. Those are two different moments: a service worker takes control as
+// soon as it activates, and only then works through the file list. Waiting on
+// `controlled` alone passed consistently on an idle machine and failed when
+// three other suites were running, reporting an empty cache for an install
+// that was simply still in progress — a flaky test, which is worse than no
+// test, because it teaches people to re-run red rather than read it.
+await page.waitForFunction(
+  async () => {
+    const s = await (await import('/src/intel/offline.js')).status();
+    return s.controlled && s.files >= 50 && s.cachedBytes > 500000;
+  },
+  null,
+  { timeout: 45000 },
+).catch(() => {});
 const st = await page.evaluate(async () => (await import('/src/intel/offline.js')).status());
 ok('a service worker registers and takes control', st.controlled === true, JSON.stringify({ registered: st.registered, controlled: st.controlled }));
 ok('it caches the whole application, not a page of it', st.files >= 50, `${st.files} files`);

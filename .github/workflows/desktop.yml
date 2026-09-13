@@ -65,6 +65,18 @@ jobs:
       # desktop build changes, which is that the page is served over a private
       # scheme instead of over HTTP. Linux only, because it needs a display
       # server and xvfb is the one that is already here.
+      # Electron needs a handful of X and GTK libraries that the runner image
+      # does not carry by default, and xvfb to have a display at all. Without
+      # these the verification step below fails for reasons that have nothing
+      # to do with the application.
+      - name: Install the libraries Electron needs to open a window
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgbm1 libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 \
+            libasound2t64 libxss1 libxtst6
+
       - name: Verify the shell actually runs the application
         if: runner.os == 'Linux'
         working-directory: desktop

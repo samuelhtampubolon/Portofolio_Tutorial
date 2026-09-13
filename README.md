@@ -7,14 +7,25 @@ No installation, no account, no server. Your model never leaves your machine.
 ![MIT licence](https://img.shields.io/badge/licence-MIT-3da639)
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
-![188 commands](https://img.shields.io/badge/commands-188-8957e5)
-![58 tests](https://img.shields.io/badge/tests-58%20passing-3da639)
+![202 commands](https://img.shields.io/badge/commands-202-8957e5)
+![1265 tests](https://img.shields.io/badge/tests-1265%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
-> **▶ Live app:** https://samuelhtampubolon.github.io/Portofolio_Tutorial/
+> **▶ Use it now, nothing to install:**
+> https://samuelhtampubolon.github.io/Portofolio_Tutorial/
 >
-> Published automatically by the [deploy workflow](../../actions/workflows/pages.yml) on every
-> push to `main`.
+> **⬇ Download it for offline use:**
+> [**Releases**](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+> — take the Windows **`.zip`**, unzip, run `TesserCAD.exe`. No installer, no
+> administrator prompt. Linux and macOS builds are there too.
+>
+> The hosted copy also works offline once opened: **Help → Offline and
+> ownership** installs it, and it then runs with the network switched off.
+>
+> The live app is published by the [deploy workflow](../../actions/workflows/pages.yml)
+> on every push to `main`; the downloads are built by the
+> [desktop workflow](../../actions/workflows/desktop.yml) and every one carries
+> a SHA-256 and a signed build-provenance attestation.
 
 ![The Model workspace: a parametric bracket built from booleans and patterns](docs/images/model.png)
 
