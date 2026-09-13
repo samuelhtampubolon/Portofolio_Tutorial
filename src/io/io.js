@@ -164,7 +164,16 @@ export function exportSVG() {
 
 export function exportPNG(viewport, scale = 2) {
   const url = viewport.snapshot(scale);
-  fetch(url).then(r => r.blob()).then(b => download(safeName(store.doc.meta.name, '.png'), b, 'image/png'));
+  // The only export that goes through fetch, because turning a data: URL into
+  // a Blob is what fetch is for. That also puts it under connect-src, unlike
+  // every other export here, so it is the one that a tightening of the policy
+  // would break on its own. Reported rather than left as an unhandled
+  // rejection: a silent no-op after clicking Export PNG reads as the
+  // application being broken, which is worse than the failure itself.
+  fetch(url)
+    .then(r => r.blob())
+    .then(b => download(safeName(store.doc.meta.name, '.png'), b, 'image/png'))
+    .catch(err => bus.emit(T.TOAST, { msg: `PNG export failed: ${err.message || err}`, kind: 'err' }));
 }
 
 /** A plain-text bill of materials for the current model. */

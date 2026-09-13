@@ -79,8 +79,15 @@ win:
   # With it on, the real metadata is written. No certificate is configured, so
   # no signature is applied; the two are separate steps and only the second
   # needs one.
+  #
+  # There is deliberately no `publisherName` here. electron-builder 26 removed
+  # it from the win schema and rejects the whole configuration if it is
+  # present — "configuration.win should be one of these: null", which names
+  # neither the key nor the reason. It described the publisher on a signing
+  # certificate, so it was meaningless without one in any case. The company
+  # name in the executable's version resource comes from `author` in
+  # desktop/package.json, which is where electron-builder reads it from.
   signAndEditExecutable: true
-  publisherName: Samuel Tampubolon
   # Applies to the zip; the nsis section below overrides it for the installer.
   # ${arch} is in the name because a file called TesserCAD-1.0.0.zip sitting in
   # a downloads folder should still say what it is a year later.
@@ -100,6 +107,11 @@ nsis:
 linux:
   target: [AppImage, tar.gz]
   category: Graphics
+  # Pairs with desktopName in package.json: it is what links a running window
+  # to its launcher entry, so the application shows its own icon in the taskbar
+  # rather than a generic one.
+  synopsis: Parametric CAD that runs offline
+  syncDesktopName: true
   artifactName: TesserCAD-${version}-linux-${arch}.${ext}
 
 mac:

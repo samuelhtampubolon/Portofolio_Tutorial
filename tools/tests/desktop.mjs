@@ -19,7 +19,7 @@
  * times. Asserting the posture means a future change that relaxes it fails
  * here instead of shipping in a binary.
  */
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -230,6 +230,28 @@ ok('only one instance may run, so two windows cannot fight over local storage',
 ok('the developer tools stay available, so anyone can verify the network claim',
   /toggleDevTools/.test(shell));
 
+/**
+ * The network claim, as a property of the process rather than of the page.
+ *
+ * The Content-Security-Policy governs what the page may request. It says
+ * nothing about the browser around the page, and Chromium ships background
+ * services — a component updater, a variations client, a reliability reporter
+ * — that talk to Google infrastructure on their own schedule. A packaged build
+ * was watched with a network monitor and did exactly that: it reached for
+ * redirector.gvt1.com having loaded nothing but local files.
+ *
+ * Switching those services off individually is asking. Resolving every
+ * hostname to nothing is preventing, and it is what makes "your documents stay
+ * on your machine" true of the program and not only of the page.
+ */
+ok('every hostname resolves to nothing, so the process cannot reach the network',
+  /host-resolver-rules[\s\S]{0,60}MAP \* ~NOTFOUND/.test(shell));
+ok('and Chromium’s own background services are switched off as well',
+  /disable-component-update/.test(shell) && /disable-domain-reliability/.test(shell) &&
+  /no-pings/.test(shell));
+ok('while external links still leave through the real browser, which resolves its own',
+  /openExternal/.test(shell));
+
 /* --- and the packaging does not undo any of it --- */
 const builder = readFileSync(join(root, 'desktop/electron-builder.yml'), 'utf8');
 ok('the Windows build ships a zip, which extracts nothing and runs nothing',
@@ -238,8 +260,24 @@ ok('and no self-extracting portable target, which is what tripped the warnings',
   !/target: portable/.test(builder));
 ok('compression is not maximum, which would make the result look packed',
   /compression: normal/.test(builder));
+// The version resource is written by `signAndEditExecutable`, and its company
+// name comes from `author` in the manifest. `publisherName` used to be
+// asserted here too and must not come back: electron-builder 26 removed it
+// from the win schema and rejects the entire configuration if it is present,
+// which broke the build with an error naming neither the key nor the reason.
+const desktopManifest = JSON.parse(readFileSync(join(root, 'desktop/package.json'), 'utf8'));
 ok('resource editing is on, so the binary carries real version metadata',
-  /signAndEditExecutable: true/.test(builder) && /publisherName:/.test(builder));
+  /signAndEditExecutable: true/.test(builder));
+ok('and the manifest supplies the company name that resource needs',
+  !!(desktopManifest.author && desktopManifest.author.name),
+  JSON.stringify(desktopManifest.author));
+// Matched as a YAML key at the start of a line, not as a word anywhere in the
+// file: the comment above the setting explains why publisherName was removed,
+// and a search for the bare word finds that explanation and fails on it. The
+// same mistake, in the same shape, has now been made three times in this
+// repository — a check that reads its own documentation as evidence.
+ok('publisherName is absent, because electron-builder 26 refuses the whole config for it',
+  !/^\s*publisherName\s*:/m.test(builder));
 ok('and the installer is per-user, so it never asks for administrator rights',
   /perMachine: false/.test(builder));
 ok('the shipped file list is explicit rather than a bundler’s output',
@@ -250,6 +288,10 @@ const workflow = readFileSync(join(root, '.github/workflows/desktop.yml'), 'utf8
 ok('the binary is built by CI from a readable commit, not committed as a blob',
   /runs-on: \$\{\{ matrix\.os \}\}/.test(workflow) && /windows-latest/.test(workflow));
 ok('the test suite runs before anything is packaged', /npm test/.test(workflow));
+ok('the packaging configuration is validated before the long build',
+  /--dir --publish never/.test(workflow));
+ok('and a pull request touching desktop/ builds it, so a broken config cannot reach a tag',
+  /pull_request:[\s\S]{0,200}desktop\/\*\*/.test(workflow));
 ok('and the shell is launched and driven before the build is published',
   /verify-desktop\.cjs/.test(workflow));
 ok('and a SHA-256 is published beside every artefact', /sha256sum/.test(workflow));
@@ -259,6 +301,33 @@ ok('and the workflow takes only the two extra scopes that needs',
   /id-token: write/.test(workflow) && /attestations: write/.test(workflow));
 ok('the zip is published alongside the installer, so the safer download exists',
   /dist-desktop\/\*\.zip/.test(workflow));
+
+/*
+ * The application icon, which the build shipped without for four releases.
+ *
+ * electron-builder looks for desktop/build/icon.png and, finding none, uses
+ * Electron's default and says so in a line nobody read. Every published binary
+ * carried a generic icon in the taskbar and the Start menu.
+ *
+ * Checked here rather than left to that warning, because the failure is silent
+ * and cosmetic, which is exactly the kind that survives four releases. The
+ * dimensions are read out of the PNG header: electron-builder derives every
+ * size it needs, the Windows .ico included, from one square image of at least
+ * 256x256, and quietly produces a blurred icon from anything smaller.
+ *
+ * Regenerate it from assets/favicon.svg with `node tools/make-icon.mjs`.
+ */
+const iconPath = join(root, 'desktop/build/icon.png');
+ok('the desktop build has an application icon, rather than Electron’s default',
+  existsSync(iconPath), iconPath);
+if (existsSync(iconPath)) {
+  const png = readFileSync(iconPath);
+  const isPng = png.subarray(1, 4).toString() === 'PNG';
+  const w = isPng ? png.readUInt32BE(16) : 0;
+  const h = isPng ? png.readUInt32BE(20) : 0;
+  ok('and it is a square PNG large enough for every size derived from it',
+    isPng && w === h && w >= 256, `${w}x${h}`);
+}
 
 const ignored = readFileSync(join(root, '.gitignore'), 'utf8');
 ok('build output and the shell’s dependencies are not committed',

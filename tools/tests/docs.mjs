@@ -19,7 +19,7 @@
  * claims to be a check count has to be one. The tolerance below is zero for
  * counts; time is not checked at all, because it is a property of the machine.
  */
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
@@ -71,14 +71,25 @@ console.log(`     headless: ${headlessTotal} checks / ${headlessSuites} suites �
 
 /* ------------------------------------------ what the documents claim it is */
 
-const DOCS = ['README.md', 'SECURITY.md', 'ARCHITECTURE.md', 'COMPARISON.md', 'ATTRIBUTION.md'];
+const DOCS = ['README.md', 'SECURITY.md', 'ARCHITECTURE.md', 'COMPARISON.md',
+  'ATTRIBUTION.md', 'PROVENANCE.md'];
 
 /**
- * Any integer adjacent to the words "headless" or "checks" is a claim about
- * the headless total. Narrow on purpose: a number next to "browser suites" or
- * "commands" is a different claim and is checked separately or not at all.
+ * Any integer adjacent to the word "headless", or to this suite's own suite
+ * count, is a claim about the headless total.
+ *
+ * The suite count is interpolated rather than written in, which is what keeps
+ * this narrow: "383 across 10 browser suites" is a different claim and must not
+ * match, and it does not, because 10 is not 16. An earlier version spelled the
+ * alternatives out by hand ("16 suites|sixteen suites|\d+ suites") and the last
+ * of those matched the browser total, which would have failed the build the
+ * first time the two numbers legitimately differed.
  */
-const HEADLESS_CLAIM = /(\d{3,5})\s*(?:headless\s+checks|checks(?:,| across| in)? (?:\d+ suites|16 suites|sixteen suites)|headless in)/gi;
+const HEADLESS_CLAIM = new RegExp(
+  String.raw`(\d{3,5})\s*(?:headless\b|checks?[,]?\s*(?:across|in)?\s*${headlessSuites}\s+suites`
+  + String.raw`|(?:across|in)\s+${headlessSuites}\s+suites)`,
+  'gi',
+);
 
 const wrong = [];
 for (const doc of DOCS) {
@@ -122,6 +133,123 @@ const electronRange = desktopPkg.devDependencies.electron;
 ok('the desktop build pins a supported Electron major',
   Number(/(\d+)/.exec(electronRange)[1]) >= 38,
   `${electronRange} — Electron drops support for all but the newest majors`);
+
+/* ------------------------------------------------ the size of the thing */
+
+// PROVENANCE and COMPARISON both state how large this codebase is, and they
+// disagreed with each other and with the tree: 23,138 against 23,115 against an
+// actual 23,147. For a document whose purpose is to be handed to someone
+// assessing the work formally, a figure that is merely close is worse than no
+// figure, because it invites the question of what else is approximate.
+//
+// Counted the obvious way — every .js line under src/ — and the method is
+// stated here so the number can be reproduced rather than trusted:
+//
+//   find src -name '*.js' | wc -l        # modules
+//   cat $(find src -name '*.js') | wc -l # lines
+function countTree(dir, exts) {
+  let files = 0, lines = 0;
+  const walk = (d) => {
+    for (const entry of readdirSync(d, { withFileTypes: true })) {
+      if (entry.name === 'node_modules') continue;
+      const full = join(d, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (exts.some(e => entry.name.endsWith(e))) {
+        files++;
+        lines += readFileSync(full, 'utf8').split('\n').length - 1;
+      }
+    }
+  };
+  walk(join(root, dir));
+  return { files, lines };
+}
+
+const src = countTree('src', ['.js']);
+const tooling = {
+  files: countTree('tools', ['.js', '.mjs', '.cjs']).files + countTree('desktop', ['.js', '.mjs', '.cjs']).files,
+  lines: countTree('tools', ['.js', '.mjs', '.cjs']).lines + countTree('desktop', ['.js', '.mjs', '.cjs']).lines,
+};
+const group = (n) => n.toLocaleString('en-US');
+console.log(`     src: ${group(src.lines)} lines across ${src.files} modules`
+  + ` · tooling: ${group(tooling.lines)} lines across ${tooling.files} files`);
+
+// "modules" means src/, "files" means the tooling. Two different trees, so the
+// noun is what tells them apart, and each document has to use the right one.
+const sizeWrong = [];
+const SIZE_CLAIM = /([\d,]{4,8}) lines across (\d+) (modules|files)/g;
+for (const doc of ['PROVENANCE.md', 'COMPARISON.md', 'ARCHITECTURE.md', 'README.md']) {
+  const path = join(root, doc);
+  if (!existsSync(path)) continue;
+  for (const m of readFileSync(path, 'utf8').matchAll(SIZE_CLAIM)) {
+    const lines = Number(m[1].replace(/,/g, ''));
+    const count = Number(m[2]);
+    const want = m[3] === 'modules' ? src : tooling;
+    if (lines !== want.lines || count !== want.files) {
+      sizeWrong.push(`${doc}: "${m[0]}" but the tree is ${group(want.lines)} lines across ${want.files} ${m[3]}`);
+    }
+  }
+}
+ok('every documented source size matches the tree', sizeWrong.length === 0, sizeWrong.join(' | '));
+
+// A commit count in a document can never be right, because the commit that
+// corrects it changes it. PROVENANCE said 44 against an actual 51. Rather than
+// check an uncheckable number, the document is required not to state one and
+// to give the command instead — which is both always accurate and more use to
+// someone verifying the record than a figure they would have to trust.
+const provenance = existsSync(join(root, 'PROVENANCE.md'))
+  ? readFileSync(join(root, 'PROVENANCE.md'), 'utf8') : '';
+const pinsCommitCount = /\|\s*\*\*Commits\*\*\s*\|\s*\d+\s*\|/.test(provenance);
+ok('PROVENANCE does not pin a commit count that goes stale on the next commit',
+  !pinsCommitCount,
+  pinsCommitCount
+    ? 'it quotes a number; name the command that counts them instead'
+    : 'it names the command instead');
+
+/* --------------------------- the version, and the platforms actually built */
+
+// Every artefact filename in the prose carries the version, and electron-builder
+// takes that version from desktop/package.json rather than from the git tag.
+// Three releases in a row shipped files whose names disagreed with something:
+// v1.0.1 built TesserCAD-1.0.0-*, and the documents then quoted 1.0.3 against a
+// manifest that had moved on. The workflow already refuses a tag that disagrees
+// with the manifest; this refuses a *document* that does.
+const version = JSON.parse(readFileSync(join(root, 'desktop/package.json'), 'utf8')).version;
+const FILENAME = /TesserCAD-(\d+\.\d+\.\d+)-/g;
+const misnamed = [];
+for (const doc of [...DOCS, 'PROVENANCE.md', 'dist/README.md']) {
+  const path = join(root, doc);
+  if (!existsSync(path)) continue;
+  for (const m of readFileSync(path, 'utf8').matchAll(FILENAME)) {
+    if (m[1] !== version) misnamed.push(`${doc}: ${m[0]} but the manifest says ${version}`);
+  }
+}
+ok('every artefact filename in the documents carries the manifest version',
+  misnamed.length === 0, misnamed.join(' | '));
+
+// A platform is only downloadable if the workflow matrix runs a job for it.
+// electron-builder.yml configures a mac target, which reads like macOS builds
+// exist; no runner ever produces one, and the README said they were "there
+// too". A promise of a download that is not built is the worst kind of
+// documentation error, because the reader only finds out after looking.
+//
+// Asserted as a *positive* requirement — while no macOS job exists, the README
+// has to carry the disclaimer — rather than by hunting the README for words
+// that sound like an offer. The first version of this check did the latter,
+// searching for ".dmg", and failed on the sentence explaining that there is no
+// macOS build. That is the fourth time in this repository that a check written
+// as a keyword search has matched its own documentation, so it is written the
+// other way round here: the thing that must be true is stated, not the thing
+// that must be absent.
+const workflow = readFileSync(join(root, '.github/workflows/desktop.yml'), 'utf8');
+const buildsMac = /os:\s*macos-/.test(workflow);
+const readmeDisclaimsMac = /no macOS\s+.{0,12}build/i.test(readme);
+ok('the README states plainly that macOS is not built, while it is not built',
+  buildsMac || readmeDisclaimsMac,
+  buildsMac ? 'a macOS job exists, so the disclaimer is no longer required'
+    : readmeDisclaimsMac
+      ? 'no macOS job in the matrix; the README says so'
+      : 'no macOS job in the matrix, and the README does not say so — add a macOS'
+        + ' runner to desktop.yml, or say plainly that there is no macOS build');
 
 /* ------------------------------------------- no document promises the past */
 

@@ -1,16 +1,21 @@
 {
   "name": "tessercad-desktop",
   "productName": "TesserCAD",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "description": "TesserCAD parametric CAD, offline: the same application, in a hardened window, with no network access.",
   "author": {
     "name": "Samuel Tampubolon",
     "url": "https://github.com/samuelhtampubolon"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samuelhtampubolon/Portofolio_Tutorial.git"
+  },
   "homepage": "https://github.com/samuelhtampubolon/Portofolio_Tutorial",
   "license": "MIT",
   "main": "main.cjs",
+  "desktopName": "tessercad.desktop",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --config electron-builder.yml --publish never"
