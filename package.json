@@ -7,7 +7,7 @@
   "license": "MIT",
   "scripts": {
     "setup": "node tools/setup-dev.mjs",
-    "test": "node tools/setup-dev.mjs && node tools/check-csp.mjs && node tools/run-tests.mjs",
+    "test": "node tools/setup-dev.mjs && node tools/check-csp.mjs && node tools/run-tests.mjs && node tools/tests/docs.mjs",
     "serve": "python3 -m http.server 8080",
     "test:core": "node tools/setup-dev.mjs && node tools/test.mjs",
     "csp": "node tools/check-csp.mjs --write",

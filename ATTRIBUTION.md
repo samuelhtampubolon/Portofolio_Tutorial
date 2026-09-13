@@ -217,7 +217,7 @@ enough to be argued with.
 ## 5. How to check any of this
 
 ```bash
-npm test                       # 869 checks, including the security suite
+npm test                       # 885 checks, including the security suite
 node tools/check-csp.mjs       # the policy's import-map hash is current
 grep -rniE "freecad|librecad|openscad|solvespace|brlcad|qcad|cadquery|blender|build123d|chili3d|meshlab|bforartists|dust3d" src/
 ```
