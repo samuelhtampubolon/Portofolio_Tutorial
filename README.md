@@ -7,14 +7,25 @@ No installation, no account, no server. Your model never leaves your machine.
 ![MIT licence](https://img.shields.io/badge/licence-MIT-3da639)
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
-![188 commands](https://img.shields.io/badge/commands-188-8957e5)
-![58 tests](https://img.shields.io/badge/tests-58%20passing-3da639)
+![202 commands](https://img.shields.io/badge/commands-202-8957e5)
+![1265 tests](https://img.shields.io/badge/tests-1265%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
-> **▶ Live app:** https://samuelhtampubolon.github.io/Portofolio_Tutorial/
+> **▶ Use it now, nothing to install:**
+> https://samuelhtampubolon.github.io/Portofolio_Tutorial/
 >
-> Published automatically by the [deploy workflow](../../actions/workflows/pages.yml) on every
-> push to `main`.
+> **⬇ Download it for offline use:**
+> [**Releases**](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+> — take the Windows **`.zip`**, unzip, run `TesserCAD.exe`. No installer, no
+> administrator prompt. Linux and macOS builds are there too.
+>
+> The hosted copy also works offline once opened: **Help → Offline and
+> ownership** installs it, and it then runs with the network switched off.
+>
+> The live app is published by the [deploy workflow](../../actions/workflows/pages.yml)
+> on every push to `main`; the downloads are built by the
+> [desktop workflow](../../actions/workflows/desktop.yml) and every one carries
+> a SHA-256 and a signed build-provenance attestation.
 
 ![The Model workspace: a parametric bracket built from booleans and patterns](docs/images/model.png)
 
@@ -689,18 +700,27 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **645 headless checks** across eleven suites, in about three seconds. It shims
+This runs **869 headless checks** across sixteen suites, in about four seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 
 ```
-ok   core            58 checks      ok   drawing         37 checks
-ok   history         40 checks      ok   tolerance       77 checks
-ok   parallel        29 checks      ok   merge           74 checks
-ok   grammar         61 checks      ok   design as code  87 checks
-ok   fasteners       73 checks      ok   deviation       61 checks
-ok   hygiene         48 checks
+ok   security        67 checks      ok   entity          44 checks
+ok   architecture    20 checks      ok   history         40 checks
+ok   desktop         73 checks      ok   parallel        29 checks
+ok   bindings        20 checks      ok   grammar         61 checks
+ok   core            58 checks      ok   fasteners       73 checks
+ok   hygiene         48 checks      ok   drawing         37 checks
+ok   tolerance       77 checks      ok   merge           74 checks
+ok   design as code  87 checks      ok   deviation       61 checks
 ```
+
+The first four are not tests of features. `security` runs live attacks,
+`architecture` enforces the layering and the originality claim, `desktop`
+attacks the desktop shell's path handling, and `bindings` checks that every
+identifier in every module resolves to a declaration, an import or the
+platform. A claim about structure or safety that is not checked is a claim
+that decays.
 
 `npm run test:core` runs just the first one, which is the expression evaluator, the CSG kernel, the
 geometry builders, the rebuild engine, the DXF codec, the starter templates and the command
@@ -721,11 +741,30 @@ drill within a third of a millimetre of nominal minus pitch, which is what a tap
 a claim is about arithmetic, the check is against the arithmetic: float32 precision is verified
 against `Float32Array` itself, not against a formula this repo wrote.
 
-Another nine suites drive a real headless Chromium against a local server, adding roughly 350 more
-checks. They need Playwright, so they are not part of `npm test`, but they are what caught the phone
-chrome leaking onto the desktop layout, a 21-pixel touch target, and a drawing dialog that read a
-field by the wrong name. Two of them make claims that only a browser can settle: that a boolean
-really leaves the main thread, and that the app really opens with the network forced off.
+### Browser tests
+
+```bash
+npm install                              # installs playwright-core
+npx playwright-core install chromium     # the browser itself, about 150 MB
+npm run test:browser                     # or: node tools/browser/run.mjs app ui
+```
+
+Ten suites, 379 checks, driving a real headless Chromium against a server they
+start themselves.
+They are what caught the phone chrome leaking onto the desktop layout, a
+21-pixel touch target, and a drawing dialog that read a field by the wrong name.
+Several make claims only a browser can settle: that the pinned import-map hash
+is current so the app starts at all, that a boolean really leaves the main
+thread, that an injected script really does not execute, and that the phone
+layout does not overflow at 400 px.
+
+They need a 150 MB browser download and take a couple of minutes, which is why
+they are a separate command rather than part of `npm test` — that suite's value
+is that it runs in four seconds and downloads nothing.
+
+**These live in `tools/browser/` and are meant to be run by anyone.** They spent
+a while outside the repository while two documents cited them as evidence, which
+was a mistake: evidence nobody else can reproduce is not evidence.
 
 ## Deploying your own copy
 
@@ -887,6 +926,191 @@ no dependencies to install, so a clone and a static server is the whole developm
 `Portofolio_Tutorial` is a portfolio repository; alongside TesserCAD it holds a set of
 machine-learning Colab notebooks (`*.ipynb` in the root). They are unrelated to the CAD app
 and are kept here as part of the same portfolio.
+
+## Desktop application, for local and offline use
+
+A downloadable build is produced by CI from the same source. Windows gets two
+downloads, and **the zip is the one to take**:
+
+| Download | What it is |
+|---|---|
+| `TesserCAD-<version>-windows-x64.zip` | **Recommended.** The unpacked application, archived. Unzip it, run `TesserCAD.exe`. Nothing extracts itself, nothing writes to `%TEMP%`, and you can see every file before running anything |
+| `TesserCAD-<version>-setup.exe` | A per-user installer, if you want a Start-menu entry. Never elevates, never writes outside your profile |
+
+AppImage, tar.gz and dmg builds come from the same workflow. Get them from the
+[Releases](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+page, or trigger **Actions → Desktop build** on your own fork.
+
+### About the Windows security warning
+
+An earlier release shipped a `portable` .exe and it tripped Windows security
+warnings. Most of that was genuinely our fault rather than a false positive
+about an unsigned file, and it is fixed:
+
+- **The format was the problem.** electron-builder's `portable` target is a
+  self-extracting archive that unpacks the whole application into `%TEMP%` and
+  runs it from there. That is the defining runtime behaviour of a dropper, and
+  protection software classifies on behaviour. It is gone, replaced by the zip
+  and the installer above.
+- **The binary carried no version information**, because the option that turns
+  off code-signing also turns off resource editing. An executable with no
+  product name, description or copyright is itself a heuristic signal. Fixed.
+- **It compressed like a packer** (`maximum` is solid LZMA). Now `normal`.
+- **It opened a listening port.** The shell used to serve the app from
+  `http://127.0.0.1`. It now uses a private `app://` scheme, so **no socket is
+  opened at all** — see below.
+
+**What has not changed: it is still not code-signed,** so SmartScreen will
+still show an "unknown publisher" prompt. Only a certificate tied to a verified
+identity removes that, and it would be dishonest to imply otherwise.
+
+What you get instead answers the question a certificate does not. Every
+artefact is published with a signed **build-provenance attestation** naming the
+commit, workflow and runner that produced it, in a public transparency log the
+publisher does not control:
+
+```bash
+gh attestation verify TesserCAD-1.0.0-windows-x64.zip \
+  --repo samuelhtampubolon/Portofolio_Tutorial
+```
+
+A certificate says someone paid for an identity. That says *this exact file was
+built from that exact commit*. [SECURITY.md](SECURITY.md) covers the
+certificate options, including the free one for open-source projects.
+
+**The binary is not committed to this repository, on purpose.** A committed
+`.exe` is a blob nobody can review and has to be trusted on the word of whoever
+pushed it. Built by CI, every artefact comes from a commit you can read, by a
+workflow you can read, on a runner nobody controls.
+
+### The shell
+
+A browser window with the browser taken away, which means the browser's sandbox
+is no longer doing the work. It is configured as strictly as Electron allows
+rather than as its defaults suggest: renderer sandbox on, context isolation on,
+**node integration off** (without that, an XSS stops being a script injection
+and becomes code execution on your machine), no preload script, no webview,
+navigation to any other origin refused, and every permission request denied.
+
+The application is served over a private `app://` scheme registered as standard
+and secure, rather than `file://` or a loopback HTTP server. ES modules and the
+import map need a real origin, which `file://` does not usefully give; a
+loopback server does, but hands every other process on your machine a port that
+serves your documents for as long as the window is open. The scheme has neither
+problem: **no port exists.**
+
+That handler is the only code in the desktop build that turns an untrusted
+string into a filesystem read, so it lives apart from the shell specifically so
+it can be tested. Fourteen path-traversal encodings are attacked directly, the
+Electron posture is asserted as code so a future one-word relaxation fails the
+build instead of shipping in a binary, and the suite asserts that no listening
+socket exists anywhere in the build.
+
+And the shell is launched and driven in CI before anything is packaged
+(`tools/verify-desktop.cjs`): seventeen checks that the real application works
+in the real window, including that the import map resolves over the scheme and
+that the boolean worker pool starts rather than silently falling back to one
+thread. Run it yourself with `npm run verify:desktop` after `cd desktop &&
+npm install`.
+
+Developer tools stay enabled. An application claiming your data never leaves
+your machine should let you open the network panel and confirm it.
+
+## Security
+
+**[SECURITY.md](SECURITY.md)** has the threat model, which is worth reading
+because most of the standard web threat model does not apply: there is no
+server, no account, no session and no outbound request, so there is nothing to
+phish and no token to steal. The whole attack surface is *files other people
+wrote* — a `.tcad`, an STL, a DXF, a pasted spec — and the four things that
+could go wrong with one.
+
+Briefly, what is enforced rather than promised:
+
+- **A Content-Security-Policy** with `default-src 'none'` and no network origin
+  permitted at all, so "makes no network calls" is a browser guarantee and not
+  a sentence in a README. `script-src` allows neither `unsafe-inline` nor
+  `unsafe-eval`; the one inline script, the import map, is pinned by a SHA-256
+  hash that `npm test` keeps current.
+- **No dynamic code execution anywhere.** The expression engine is a
+  hand-written parser precisely so `width * 2` never reaches `eval`. The suite
+  asserts that no file in the project — tests included — contains `eval(`,
+  `Function(` or a string-bodied timer.
+- **Validation at the trust boundary.** The feature catalogue's `min`/`max` are
+  enforced in `migrate()`, which every document passes through however it
+  arrived, rather than in a widget a hand-edited file bypasses.
+- **Prototype pollution closed** at every parse boundary, tested by four
+  separate routes, with a null-prototype expression scope.
+
+Verified by 66 live attacks in `tools/tests/security.mjs` plus 62 in
+`tools/tests/desktop.mjs`. One gap is named rather than hidden: `frame-ancestors`
+is header-only and GitHub Pages serves no custom headers, so clickjacking is not
+prevented on the hosted copy. The desktop build sends the header, because there
+it controls the server.
+
+## Architecture
+
+**[ARCHITECTURE.md](ARCHITECTURE.md)** explains where each boundary is and why.
+
+The short version: seven layers, and a layer may import from any layer below it
+and from none above. `core` imports nothing from the project, so the arithmetic
+runs under Node with no browser. `intel` touches no DOM, which is why all
+twenty-four engineering modules are tested headlessly. `main.js` is the only
+file that imports `ui`.
+
+None of that is a convention. `tools/tests/architecture.mjs` enforces the
+layering, proves the graph is acyclic, and fails the build on a module over
+1200 lines or one without a header comment — because a structure that cannot be
+checked is a structure that erodes.
+
+## Attribution and originality
+
+**[ATTRIBUTION.md](ATTRIBUTION.md)** states what in this repository is original,
+what is borrowed and under what terms, in enough detail to be argued with.
+
+The short version: no source file here is copied, ported or translated out of any
+other CAD application. three.js is vendored unmodified with its MIT licence
+intact. One algorithm — the BSP boolean in `src/core/csg-core.js` — is
+structurally derived from Evan Wallace's MIT-licensed csg.js and is credited for
+it in the file header as well as in ATTRIBUTION.md. Everything else third-party
+is a published mathematical method, implemented from its statement and verified
+against an independent reference in the tests.
+
+Ten of the thirteen open-source 3D and CAD projects this one is measured
+against are GPL, LGPL or AGPL, which is exactly why nothing from them could be
+used in an MIT project even where it would have been convenient. What they
+contributed was problem framing, and that is acknowledged where it applies:
+`src/ui/operators.js` says in its header that modal transform operators are
+Blender's idea, reimplemented from the behaviour because it is better than the
+CAD convention.
+
+That separation is enforced, not merely stated. `tools/tests/architecture.mjs`
+asserts that exactly five lines in `src/` mention any of the thirteen by name —
+three prose comments and two palette search keywords, each listed in
+ATTRIBUTION.md — and fails the build on a sixth.
+
+## How this compares to those thirteen
+
+**[COMPARISON.md](COMPARISON.md)** is the honest version, which means it is
+mostly about what this tool cannot do.
+
+The short version: TesserCAD is **not** "better than" FreeCAD, Blender or
+BRL-CAD, is not trying to be, and could not be. It leads on a specific set of
+properties that anyone can verify in minutes — no install, no build step so the
+code you audit is the code that runs, structure enforced by tests rather than
+by convention, a CSP the browser enforces, and engineering output most of them
+do not attempt — and it trails decisively elsewhere.
+
+The most important gap, stated plainly: **there is no B-rep kernel.** Booleans
+are on triangle meshes, so there are no NURBS surfaces, no fillets on arbitrary
+edges and no STEP or IGES exchange. If you need exact geometry or a STEP file
+for a manufacturer, FreeCAD, chili3d, CadQuery or build123d are not merely
+better at that — they are the only option. Sketch constraints belong to
+SolveSpace, mesh repair to MeshLab, rendering and animation to Blender.
+
+COMPARISON.md also says which comparisons are meaningless (feature counts,
+lines of code, "architecture" in the abstract) and when you should use
+something else instead of this.
 
 ## Licence
 

@@ -218,7 +218,7 @@ export class TimelineUI {
       }
       // summary of every key on the collapsed row
       const seen = new Set();
-      for (const [prop, keys] of Object.entries(tr)) {
+      for (const keys of Object.values(tr)) {
         for (const k of keys || []) {
           const key = Math.round(k.t * 1000);
           if (seen.has(key)) continue;
@@ -229,7 +229,6 @@ export class TimelineUI {
             title: `${k.t.toFixed(2)} s`,
           }));
         }
-        void prop;
       }
       row.addEventListener('dblclick', (e) => {
         const r = row.getBoundingClientRect();

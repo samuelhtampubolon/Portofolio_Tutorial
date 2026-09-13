@@ -12,7 +12,7 @@ globalThis.structuredClone ??= (o) => JSON.parse(JSON.stringify(o));
 
 const S = await import('../../src/intel/speak.js');
 const { newDocument } = await import('../../src/core/doc.js');
-const { buildScope } = await import('../../src/core/expr.js');
+const { buildScope, evaluate } = await import('../../src/core/expr.js');
 
 let fails = 0;
 const ok = (name, cond, extra = '') => { if (!cond) fails++; console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${extra ? '  - ' + extra : ''}`); };
@@ -67,9 +67,11 @@ ok('and the parameter is declared with the value the standard gives',
   r.params.some(p => p.name === 'clear_m6' && p.value === 6.6), JSON.stringify(r.params));
 ok('the parameter carries the standard it came from',
   /ISO 273/.test(r.params.find(p => p.name === 'clear_m6').note));
+// Evaluated with the application's own parser, not with Function(): building a
+// second evaluator in a test proves nothing about the first, and this project
+// does not execute strings as code anywhere.
 ok('so the expression actually evaluates against it', (() => {
   const { scope } = buildScope(r.params.map((p, i) => ({ id: `p${i}`, ...p })));
-  const { evaluate } = { evaluate: (src, sc) => Function('s', `with(s){return ${src}}`)(sc) };
   return Math.abs(evaluate(first(r).params.r, scope) - 3.3) < 1e-9;
 })());
 ok('and it says why that matters', r.notes.some(n => /changing the bolt size/.test(n)));

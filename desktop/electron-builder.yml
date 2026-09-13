@@ -1,0 +1,113 @@
+# How the downloadable build is packaged.
+#
+# ## Why these Windows targets, and not the obvious one
+#
+# The obvious target for "one file, no installer" is electron-builder's
+# `portable`, and this project shipped it first. It was wrong, and it is the
+# reason the download tripped Windows security warnings.
+#
+# A `portable` artefact is a self-extracting archive: run it, and it unpacks
+# the entire application into %TEMP% and executes from there. Stated plainly,
+# that is a single executable that writes a payload to a temporary directory
+# and runs it, which is the defining runtime behaviour of a dropper. Endpoint
+# protection classifies on behaviour, so the format itself was the problem —
+# no amount of signing makes that shape look benign, and the application was
+# never doing anything wrong.
+#
+# What replaces it:
+#
+#   zip   the unpacked application, archived. Nothing extracts itself, nothing
+#         writes to %TEMP%, and the user can see every file before running
+#         anything. This is the lowest-friction way to distribute an unsigned
+#         desktop application and it is the recommended download.
+#   nsis  a per-user installer for people who want a Start-menu entry. Never
+#         elevates, never writes outside the user profile.
+#
+# `compression` is deliberately `normal` rather than `maximum`. Maximum is
+# solid LZMA, which makes the result statistically indistinguishable from a
+# packed executable, and packing is itself a heuristic signal. The few
+# megabytes saved are not worth resembling the thing being ruled out.
+appId: io.github.samuelhtampubolon.tessercad
+productName: TesserCAD
+copyright: Copyright (c) 2026 Samuel Tampubolon. MIT licensed.
+
+directories:
+  output: ../dist-desktop
+  buildResources: build
+
+# The application is the repository's static files plus this shell. Nothing is
+# compiled, so the list is explicit rather than the output of a bundler: what
+# ships is what you can read in the repository.
+files:
+  - main.cjs
+  - protocol.cjs
+  - package.json
+  - from: ..
+    to: .
+    filter:
+      - index.html
+      - sw.js
+      - src/**/*
+      - styles/**/*
+      - vendor/**/*
+      - assets/**/*
+      - LICENSE
+      - ATTRIBUTION.md
+      - '!**/*.map'
+
+asar: true
+compression: normal
+
+win:
+  target:
+    - target: zip
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+
+  # Left ON, which is the opposite of what the name suggests it does here.
+  #
+  # This option governs signing *and resource editing*, and turning it off to
+  # express "we have no certificate" also stopped electron-builder writing the
+  # Win32 version resource. The shipped binary then carried Electron's generic
+  # metadata instead of this application's: no product name, no file
+  # description, no company, no copyright. An executable with no version
+  # information is a documented heuristic signal, so the setting meant to be
+  # honest about the absence of a certificate was actively making the download
+  # look worse.
+  #
+  # With it on, the real metadata is written. No certificate is configured, so
+  # no signature is applied; the two are separate steps and only the second
+  # needs one.
+  signAndEditExecutable: true
+  publisherName: Samuel Tampubolon
+  # Applies to the zip; the nsis section below overrides it for the installer.
+  # ${arch} is in the name because a file called TesserCAD-1.0.0.zip sitting in
+  # a downloads folder should still say what it is a year later.
+  artifactName: TesserCAD-${version}-windows-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  artifactName: TesserCAD-${version}-setup.${ext}
+  # No desktop shortcut and no run-on-finish: an installer that leaves things
+  # behind it was not asked for is an installer people learn to distrust.
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  runAfterFinish: false
+
+linux:
+  target: [AppImage, tar.gz]
+  category: Graphics
+  artifactName: TesserCAD-${version}-linux-${arch}.${ext}
+
+mac:
+  target: [dmg, zip]
+  category: public.app-category.graphics-design
+  artifactName: TesserCAD-${version}-mac-${arch}.${ext}
+  # Hardened runtime is what lets a notarised build run without a Gatekeeper
+  # override. It costs nothing to enable now, so that a future signed build
+  # needs a certificate and not a packaging change as well.
+  hardenedRuntime: true
+  gatekeeperAssess: false

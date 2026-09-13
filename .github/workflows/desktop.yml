@@ -1,0 +1,139 @@
+# Build the downloadable desktop application.
+#
+# The binary is produced here rather than committed, and that is a security
+# decision before it is a tidiness one. A committed .exe is a blob nobody can
+# review, cannot be traced to the source it came from, and has to be trusted on
+# the word of whoever pushed it. Built here, every release artefact comes from a
+# commit anyone can read, by a workflow anyone can read, on a runner nobody
+# controls, with a SHA-256 published beside it.
+#
+# Every artefact also gets a signed build-provenance attestation, which is the
+# part that actually answers "is this binary the one built from that source".
+# A SHA-256 proves two files are identical; an attestation proves which commit,
+# workflow and runner produced the file, signed by a transparency log the
+# publisher does not control. That is a stronger claim than an ordinary
+# code-signing certificate makes, and unlike one it cannot be bought.
+#
+# Triggered by a version tag, or by hand from the Actions tab.
+name: Desktop build
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  # Required to mint the provenance attestation below. Both are the narrow
+  # scopes the attestation action documents; nothing here needs more.
+  id-token: write
+  attestations: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact: windows
+          - os: ubuntu-latest
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # The web application has no dependencies, so its own checks run first
+      # and cost nothing. A desktop build of a broken app is worse than none.
+      - name: Verify the application before packaging it
+        run: npm test
+
+      # `npm ci`, not `npm install`: it installs exactly the tree in
+      # package-lock.json and fails if the manifest and the lock disagree. A
+      # provenance attestation that says "built from this commit" is worth
+      # rather less if the dependency tree could differ between two runs of it.
+      - name: Install the shell's build tooling
+        working-directory: desktop
+        run: npm ci --no-audit --no-fund
+
+      # Launch the real shell and drive the real application in it. The other
+      # suites test the app in a browser or in Node; neither exercises what the
+      # desktop build changes, which is that the page is served over a private
+      # scheme instead of over HTTP. Linux only, because it needs a display
+      # server and xvfb is the one that is already here.
+      # Electron needs a handful of X and GTK libraries that the runner image
+      # does not carry by default, and xvfb to have a display at all. Without
+      # these the verification step below fails for reasons that have nothing
+      # to do with the application.
+      - name: Install the libraries Electron needs to open a window
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xvfb libgbm1 libnss3 libatk1.0-0 libatk-bridge2.0-0 libgtk-3-0 \
+            libasound2t64 libxss1 libxtst6
+
+      - name: Verify the shell actually runs the application
+        if: runner.os == 'Linux'
+        working-directory: desktop
+        run: xvfb-run -a ./node_modules/.bin/electron --no-sandbox ../tools/verify-desktop.cjs
+
+      - name: Package
+        working-directory: desktop
+        run: npm run dist
+
+      # A hash lets anyone confirm the file they downloaded is the file this
+      # workflow produced. It is the only verification available without a
+      # code-signing certificate, and it is worth more than a self-signed one.
+      - name: Publish checksums
+        shell: bash
+        run: |
+          cd dist-desktop
+          for f in *.exe *.zip *.AppImage *.dmg *.tar.gz; do
+            [ -e "$f" ] || continue
+            sha256sum "$f" | tee "$f.sha256"
+          done
+          echo '--- artefacts ---'
+          ls -la
+
+      # Cryptographic proof of where each file came from. Verified by anyone
+      # with:  gh attestation verify <file> --repo <owner>/<repo>
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist-desktop/*.exe
+            dist-desktop/*.zip
+            dist-desktop/*.AppImage
+            dist-desktop/*.dmg
+            dist-desktop/*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tessercad-${{ matrix.artifact }}
+          path: |
+            dist-desktop/*.exe
+            dist-desktop/*.zip
+            dist-desktop/*.AppImage
+            dist-desktop/*.dmg
+            dist-desktop/*.tar.gz
+            dist-desktop/*.sha256
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist-desktop/*.exe
+            dist-desktop/*.zip
+            dist-desktop/*.AppImage
+            dist-desktop/*.dmg
+            dist-desktop/*.tar.gz
+            dist-desktop/*.sha256
+          fail_on_unmatched_files: false

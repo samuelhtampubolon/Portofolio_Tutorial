@@ -28,6 +28,13 @@ export function install() {
   if (typeof navigator === 'undefined' || !navigator.serviceWorker) {
     return Promise.resolve({ ok: false, reason: 'This browser has no service worker support.' });
   }
+  // The desktop build already holds every file on disk, so there is nothing
+  // for a cache to add and the honest answer is "not needed" rather than a
+  // complaint about the origin. Checked before the https test below, which
+  // would otherwise report a missing feature as a failure.
+  if (typeof location !== 'undefined' && location.protocol === 'app:') {
+    return Promise.resolve({ ok: false, reason: 'Already offline: this is the desktop build, and every file is local.' });
+  }
   // A service worker needs a secure origin. On plain http it is simply absent,
   // and the app works exactly as before, just without the offline copy.
   if (typeof location !== 'undefined' && location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {

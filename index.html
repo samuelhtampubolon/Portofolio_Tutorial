@@ -12,6 +12,39 @@
 <meta property="og:type" content="website">
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="styles/app.css">
+<!--
+  Content-Security-Policy, set here because a static site has no server to set
+  a header. This is what turns "this application makes no network calls" from a
+  promise in a README into something the browser enforces: default-src 'none'
+  means nothing loads from anywhere unless a directive below allows it, and
+  every directive below allows only this origin.
+
+  Notes on the parts that are not simply 'self':
+    script-src  carries one sha256 hash, for the import map. An import map must
+                be inline to apply to the modules that follow it, so it cannot
+                be moved to a file the way the boot script was. The hash pins
+                its exact contents; change the map and the hash must change
+                with it, which tools/check-csp.mjs verifies.
+    style-src   allows 'unsafe-inline' for style *attributes*, which the app
+                sets when positioning gizmos and sizing bars. That is a far
+                smaller surface than inline script and cannot execute code.
+    img-src     data: and blob: for the PNG snapshot path, which renders the
+                canvas to a data URL and downloads it as a blob.
+    connect-src data: and blob: for that same path. No http or https origin is
+                permitted at all, so a telemetry call could not leave even if
+                one were added by mistake.
+    worker-src  'self' for the boolean workers, blob: is not used but is
+                permitted because some browsers route module workers that way.
+
+  Two directives are deliberately absent because a <meta> tag cannot carry
+  them: frame-ancestors and X-Frame-Options are header-only, and GitHub Pages
+  serves no custom headers. Clickjacking is therefore not prevented by this
+  deployment, and the honest place to say so is here rather than nowhere. A
+  copy served behind any ordinary web server should add both as headers; see
+  SECURITY.md.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'sha256-ekW7tGUE0n5OEhTDKbCWCVb410aJf2xOo4YDB2AMxgU='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' data: blob:; worker-src 'self' blob:; manifest-src 'self'; form-action 'none'; base-uri 'none'; object-src 'none'">
+<meta name="referrer" content="no-referrer">
 <script type="importmap">
 {
   "imports": {
@@ -104,12 +137,6 @@
   <div style="padding:2rem;font:16px system-ui">TesserCAD needs JavaScript enabled to run.</div>
 </noscript>
 
-<script type="module">
-  import('./src/main.js').catch(err => {
-    console.error(err);
-    const m = document.getElementById('bootMsg');
-    if (m) { m.textContent = 'Failed to load: ' + err.message; m.style.color = '#ff6b6b'; }
-  });
-</script>
+<script type="module" src="./src/boot.js"></script>
 </body>
 </html>

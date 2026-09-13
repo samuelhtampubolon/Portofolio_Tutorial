@@ -1,12 +1,24 @@
 /**
- * The boolean kernel, with no THREE in it.
+ * The boolean kernel: constructive solid geometry over BSP trees.
  *
- * This is the same BSP-tree algorithm as before, lifted out of csg.js so it
- * can run in a Web Worker. A module worker does not get the page's import map,
- * so a file that says `import * as THREE from 'three'` cannot be loaded in
- * one; a file whose only imports are relative can. That is the whole reason
- * this split exists, and it is why every function here speaks in flat typed
- * arrays rather than BufferGeometry.
+ * ATTRIBUTION. The method is the classic one: Thibault and Naylor, "Set
+ * operations on polyhedra using binary space partitioning trees", SIGGRAPH
+ * 1987. The specific decomposition used below, and in particular the
+ * numerically careful `splitPolygon` that classifies a polygon against a plane
+ * and emits the coplanar cases separately, follows Evan Wallace's csg.js
+ * (2011), which is MIT licensed. See ATTRIBUTION.md for the notice. The
+ * arithmetic here is rewritten over flat typed arrays rather than a per-vertex
+ * object graph, and the tree, the operations and the tolerance handling are
+ * this project's own, but the shape of the algorithm is his and the credit
+ * belongs there rather than in a footnote.
+ *
+ * This file holds no reference to three.js, which is the reason it exists
+ * separately from csg.js in this same directory. A module worker does not
+ * receive the page's import map, so a file that says
+ * `import * as THREE from 'three'` cannot be loaded in one, while a file whose
+ * only imports are relative can. Keeping the maths here and the adapter next
+ * door is what lets the same code run on the main thread and in a worker with
+ * no second implementation to keep in step.
  *
  * Triangles in, triangles out: `{ position: Float32Array, normal: Float32Array }`
  * with three vertices per triangle and no index. Those arrays are transferable,
@@ -51,7 +63,9 @@ const COPLANAR = 0, FRONT = 1, BACK = 2, SPANNING = 3;
 
 /**
  * Split `poly` by `plane`, appending the pieces to the four output lists.
- * Mirrors csg.js splitPolygon, which is the numerically careful version.
+ * This follows csg.js (Evan Wallace, MIT); see the attribution at the top of
+ * this file. The care is in the coplanar cases: a polygon lying in the plane
+ * has to go to the side its own normal faces, or the tree loses the surface.
  */
 function splitPolygon(plane, poly, coFront, coBack, front, back) {
   const { n, w } = plane;

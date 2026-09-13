@@ -42,6 +42,18 @@ const RESERVED = new Set(['pos', 'rot', 'scale', 'material', 'inputs', 'profile'
 /* ------------------------------------------------------------------ write */
 
 const isIdent = (s) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(s);
+
+/**
+ * Names a parameter may not take.
+ *
+ * `__proto__` and friends are valid identifiers, so the pattern above accepts
+ * them, and a parameter called `__proto__` then exists but can never be read
+ * back reliably: the expression scope has a null prototype precisely so such a
+ * name cannot collide with the object model, which means the parameter
+ * silently does nothing. Refusing it by name is clearer than accepting a
+ * parameter that cannot work.
+ */
+const RESERVED_NAMES = new Set(['__proto__', 'constructor', 'prototype', '__defineGetter__', '__defineSetter__']);
 const quote = (s) => `"${String(s ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
 
 function num(n) {
@@ -282,6 +294,7 @@ export function fromSpec(text, { base = null, keepIds = true } = {}) {
         if (eq < 0) { fail(i, 'A parameter needs a value: param name = 10.'); break; }
         const name = unquote(rest.slice(0, eq));
         if (!isIdent(name)) { fail(i, `"${name}" is not a usable parameter name. Letters, digits and underscore, starting with a letter.`); break; }
+        if (RESERVED_NAMES.has(name)) { fail(i, `"${name}" is reserved by the language and cannot name a parameter.`); break; }
         if (seenParams.has(name)) { fail(i, `Parameter "${name}" is defined twice.`); break; }
         seenParams.add(name);
         doc.params.push({ id: uid('p'), name, value: parseValue(rest.slice(eq + 1)), note: comment });
