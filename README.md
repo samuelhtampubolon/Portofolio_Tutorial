@@ -970,7 +970,7 @@ commit, workflow and runner that produced it, in a public transparency log the
 publisher does not control:
 
 ```bash
-gh attestation verify TesserCAD-1.0.0-windows-x64.zip \
+gh attestation verify TesserCAD-1.0.2-windows-x64.zip \
   --repo samuelhtampubolon/Portofolio_Tutorial
 ```
 

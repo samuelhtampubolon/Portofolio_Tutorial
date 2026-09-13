@@ -13,7 +13,7 @@
  * the composition root the only file that knows about everything.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative as nodeRelative, dirname, sep } from 'node:path';
+import { join, relative as nodeRelative, dirname, sep, win32 } from 'node:path';
 /**
  * `path.relative` that always returns forward slashes.
  *
@@ -312,6 +312,27 @@ ok('and every tool comparing a relative path to a "/" literal normalises first',
   unnormalised.length === 0, unnormalised.map(f => relative(root, f)).join(', '));
 
 ok('the detectors are not vacuous', toolFiles.length > 10, `${toolFiles.length} tool files`);
+
+/**
+ * And the Windows behaviour itself, checked from here.
+ *
+ * Banning a pattern is only half the argument; the other half is showing what
+ * the pattern actually did. Node carries the Windows implementations on every
+ * platform — `path.win32`, and a `windows` option on `fileURLToPath` — so the
+ * failure that could only be seen on a Windows runner can be reproduced on a
+ * Linux one, which is where it will now be caught.
+ */
+const WIN_URL = 'file:///D:/a/repo/tools/tests/architecture.mjs';
+ok('a file URL’s .pathname really does start with a slash before the drive',
+  new URL('../..', WIN_URL).pathname.startsWith('/D:'));
+ok('and fileURLToPath really does remove it',
+  /^D:\\/.test(fileURLToPath(new URL('../..', WIN_URL), { windows: true })));
+
+const winRaw = win32.relative('D:\\a\\repo\\src', 'D:\\a\\repo\\src\\core\\doc.js');
+ok('a Windows relative path really does defeat a "core/" comparison',
+  winRaw === 'core\\doc.js' && !winRaw.startsWith('core/'), winRaw);
+ok('and normalising the separators really does fix it',
+  winRaw.split(win32.sep).join('/').startsWith('core/'));
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL ARCHITECTURE CHECKS PASS');
 process.exit(fails ? 1 : 0);
