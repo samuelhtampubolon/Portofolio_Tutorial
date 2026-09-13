@@ -143,7 +143,7 @@ repository checks and fails the build over.
 | | |
 |---|---|
 | Headless checks | 892 across 16 suites, about four seconds, downloads nothing |
-| Browser checks | 383 across 10 browser suites, in a real Chromium |
+| Browser checks | 385 across 10 browser suites, in a real Chromium |
 | Desktop checks | 17, driving the real application in a real Electron window |
 | Security checks | 76, which run attacks rather than assert outcomes |
 

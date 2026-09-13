@@ -193,13 +193,43 @@ s = await page.evaluate(async () => {
   IO.exportDXF(); out.dxf = blobs.at(-1)?.size || 0;
   IO.exportSVG(); out.svg = blobs.at(-1)?.size || 0;
   IO.saveProject(); out.proj = blobs.at(-1)?.size || 0;
+  IO.exportBOM(tesserCAD.build); out.bom = blobs.at(-1)?.size || 0;
   out.dxfRound = dxfmod.fromDXF(dxfmod.toDXF(store.doc.draw)).entities.length;
+
+  // glTF and PNG finish asynchronously, so they are awaited rather than
+  // measured on the next line like the others.
+  //
+  // PNG is here for a reason beyond coverage. It is the only export that goes
+  // through `fetch`, on a data: URL produced by canvas.toDataURL, and `fetch`
+  // is governed by connect-src. This page runs under default-src 'none', so
+  // one missing token in that directive silently breaks the export and
+  // nothing else — exactly the kind of failure a policy this strict invites,
+  // and one no static check can see.
+  await new Promise((resolve) => {
+    IO.exportGLTF(tesserCAD.vp, { binary: true });
+    setTimeout(resolve, 1200);
+  });
+  out.gltf = blobs.at(-1)?.size || 0;
+
+  out.pngError = null;
+  try {
+    IO.exportPNG(tesserCAD.vp, 1);
+    await new Promise((resolve) => setTimeout(resolve, 1200));
+    out.png = blobs.at(-1)?.size || 0;
+  } catch (err) {
+    out.png = 0;
+    out.pngError = String(err);
+  }
+
   URL.createObjectURL = origCreate;
   HTMLAnchorElement.prototype.click = origClick;
   return out;
 });
 check('exports STL/OBJ/PLY/DXF/SVG/project', s.stl > 1000 && s.obj > 500 && s.ply > 500 && s.dxf > 200 && s.svg > 200 && s.proj > 500, JSON.stringify(s));
 check('DXF round-trips', s.dxfRound > 0, `${s.dxfRound} entities`);
+check('glTF and the bill of materials export too', s.gltf > 500 && s.bom > 100, `gltf ${s.gltf} B, bom ${s.bom} B`);
+check('PNG export survives connect-src, which governs its data: fetch',
+  s.png > 1000, s.pngError || `${s.png} B`);
 
 // 10. save/load round trip
 s = await page.evaluate(async () => {

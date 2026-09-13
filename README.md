@@ -8,7 +8,7 @@ No installation, no account, no server. Your model never leaves your machine.
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
 ![202 commands](https://img.shields.io/badge/commands-202-8957e5)
-![1292 tests](https://img.shields.io/badge/tests-1292%20passing-3da639)
+![1294 tests](https://img.shields.io/badge/tests-1294%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
 > **▶ Use it now, nothing to install:**
@@ -752,7 +752,7 @@ npx playwright-core install chromium     # the browser itself, about 150 MB
 npm run test:browser                     # or: node tools/browser/run.mjs app ui
 ```
 
-Ten suites, 383 checks, driving a real headless Chromium against a server they
+Ten suites, 385 checks, driving a real headless Chromium against a server they
 start themselves.
 They are what caught the phone chrome leaking onto the desktop layout, a
 21-pixel touch target, and a drawing dialog that read a field by the wrong name.
