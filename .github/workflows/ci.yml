@@ -14,10 +14,15 @@ on:
 
 # A push to a branch with an open PR triggers this twice: once for the push and
 # once for the PR sync. Both run the full browser suite, which is minutes of
-# runner time spent proving the same thing. Newer runs supersede older ones for
-# the same ref.
+# runner time spent proving the same thing.
+#
+# Keyed on the head branch rather than on github.ref, which was the first
+# attempt and did not work: for a push the ref is refs/heads/<branch> and for
+# the pull_request event it is refs/pull/<n>/merge, so the two runs landed in
+# different groups and neither cancelled the other — exactly the duplication
+# the group was added to stop.
 concurrency:
-  group: tests-${{ github.ref }}
+  group: tests-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
