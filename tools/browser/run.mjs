@@ -32,6 +32,7 @@ const SUITES = [
   ['ui', 'Every command runs, and the interface fits'],
   ['workers', 'The boolean worker pool, under load'],
   ['offline', 'Offline install and ownership'],
+  ['subpath', 'The site served from a subdirectory, as GitHub Pages serves it'],
   ['dialogs', 'Dialogs, drafting and merge conflict resolution'],
   ['studio', 'Standards, macros and the why-tutor'],
   ['analyse', 'The engineering layer through the interface'],
@@ -129,7 +130,7 @@ if (!failed && selected.length === SUITES.length) {
   const root = join(here, '../..');
   const stale = [];
   // "382 across 10 browser suites", "Ten suites, 382 checks", "382 in 10 browser suites"
-  const CLAIM = /(\d{2,5})\s*(?:checks?\s*)?(?:across|in)?\s*(?:\d+|ten)\s*browser suites|(?:ten|\d+) suites, (\d{2,5}) checks/gi;
+  const CLAIM = /(\d{2,5})\s*(?:checks?\s*)?(?:across|in)?\s*(?:\d+|[a-z]+)\s*browser suites|(?:[a-z]+|\d+) suites, (\d{2,5}) checks/gi;
   for (const doc of ['README.md', 'COMPARISON.md', 'ARCHITECTURE.md', 'PROVENANCE.md']) {
     const path = join(root, doc);
     if (!existsSync(path)) continue;

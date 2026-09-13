@@ -134,6 +134,51 @@ ok('the desktop build pins a supported Electron major',
   Number(/(\d+)/.exec(electronRange)[1]) >= 38,
   `${electronRange} — Electron drops support for all but the newest majors`);
 
+/* --------------------------------- every link points at this repository */
+
+// The repository was renamed from Portofolio_Tutorial to TesserCAD, and the
+// name appeared in twenty places: prose links, clone instructions, the two
+// `gh attestation verify --repo` examples, the desktop manifest, and three
+// Help menu items that open a browser from inside the application.
+//
+// GitHub redirects an old repository URL to the new one, so a stale link keeps
+// working and nothing tells you it is stale. That is the problem: it decays
+// quietly, and it stops working the day the old name is claimed by someone
+// else. GitHub Pages does not redirect at all, so a stale live-app link is
+// simply dead.
+//
+// The manifest's `repository` field is the single source of truth, because
+// electron-builder already reads it and a wrong value there breaks the build
+// loudly. Every link under this owner is compared against it. Links to other
+// owners are third-party — the thirteen prior-art projects — and are left
+// alone.
+const repoUrl = JSON.parse(readFileSync(join(root, 'desktop/package.json'), 'utf8')).repository.url;
+const [, owner, repoName] = /github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(repoUrl);
+
+const LINKED = [...DOCS, 'dist/README.md', 'src/ui/commands.js', 'src/main.js'];
+const badLinks = [];
+for (const doc of LINKED) {
+  const path = join(root, doc);
+  if (!existsSync(path)) continue;
+  const body = readFileSync(path, 'utf8');
+
+  // github.com/<this owner>/<anything> must be this repository.
+  for (const m of body.matchAll(new RegExp(`github\\.com/${owner}/([A-Za-z0-9_.-]+)`, 'g'))) {
+    const named = m[1].replace(/\.git$/, '');
+    if (named !== repoName) badLinks.push(`${doc}: github.com/${owner}/${named}`);
+  }
+  // <owner>.github.io/<path> is the Pages site, whose path is the repo name.
+  for (const m of body.matchAll(new RegExp(`${owner}\\.github\\.io/([A-Za-z0-9_.-]+)`, 'g'))) {
+    if (m[1] !== repoName) badLinks.push(`${doc}: ${owner}.github.io/${m[1]}`);
+  }
+  // `--repo owner/name` in the attestation examples.
+  for (const m of body.matchAll(new RegExp(`--repo ${owner}/([A-Za-z0-9_.-]+)`, 'g'))) {
+    if (m[1] !== repoName) badLinks.push(`${doc}: --repo ${owner}/${m[1]}`);
+  }
+}
+ok(`every link under ${owner}/ points at ${repoName}, the repository the manifest names`,
+  badLinks.length === 0, badLinks.join(' | '));
+
 /* ------------------------------------------- the licence GitHub can read */
 
 // GitHub reported this repository's licence as NOASSERTION, meaning its

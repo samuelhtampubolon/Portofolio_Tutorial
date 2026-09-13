@@ -3,7 +3,7 @@
 ## Reporting something
 
 Open an issue at
-[github.com/samuelhtampubolon/Portofolio_Tutorial/issues](https://github.com/samuelhtampubolon/Portofolio_Tutorial/issues).
+[github.com/samuelhtampubolon/TesserCAD/issues](https://github.com/samuelhtampubolon/TesserCAD/issues).
 There is no server, no user account and no stored user data anywhere but the
 machine the application is running on, so there is no incident response to
 co-ordinate and nothing gained by reporting privately first. A public issue gets
@@ -225,7 +225,7 @@ actually matters** — did this binary come from this source:
 
 ```bash
 gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
-  --repo samuelhtampubolon/Portofolio_Tutorial
+  --repo samuelhtampubolon/TesserCAD
 ```
 
 Every artefact is published with a signed build-provenance attestation naming

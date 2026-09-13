@@ -18,7 +18,7 @@ gives you legal advice has accurate facts to work from.
 | **Name** | TesserCAD |
 | **What it is** | A parametric CAD application: 3D solid modelling, 2D drafting, and a timeline for sequencing and simple dynamics. Runs as a static web page and as a desktop application. |
 | **Licence** | MIT (see [LICENSE](LICENSE)) |
-| **Repository** | https://github.com/samuelhtampubolon/Portofolio_Tutorial |
+| **Repository** | https://github.com/samuelhtampubolon/TesserCAD |
 | **First commit** | 2026-05-16 |
 | **This record** | 2026-09-13 |
 | **Commits** | `git rev-list --count HEAD` — counted rather than quoted, because the commit that corrects a quoted figure changes it |
@@ -29,7 +29,7 @@ gives you legal advice has accurate facts to work from.
 | | |
 |---|---|
 | Application source | 23,147 lines across 51 modules (`src/`) |
-| Test and build tooling | 8,539 lines across 37 files (`tools/`, `desktop/`) |
+| Test and build tooling | 8,720 lines across 38 files (`tools/`, `desktop/`) |
 | Third-party code included | three.js r169, vendored unmodified (`vendor/`) |
 | Runtime dependencies fetched at install | none |
 
@@ -143,7 +143,7 @@ repository checks and fails the build over.
 | | |
 |---|---|
 | Headless checks | 898 across 16 suites, about four seconds, downloads nothing |
-| Browser checks | 385 across 10 browser suites, in a real Chromium |
+| Browser checks | 394 across 11 browser suites, in a real Chromium |
 | Desktop checks | 17, driving the real application in a real Electron window |
 | Security checks | 76, which run attacks rather than assert outcomes |
 
@@ -159,7 +159,7 @@ public transparency log the publisher does not control:
 
 ```bash
 gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
-  --repo samuelhtampubolon/Portofolio_Tutorial
+  --repo samuelhtampubolon/TesserCAD
 ```
 
 That is stronger evidence of origin than a code-signing certificate, which

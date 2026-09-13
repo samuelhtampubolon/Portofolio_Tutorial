@@ -220,9 +220,9 @@ export function buildCommands(app) {
   add('help.shortcuts', 'Keyboard shortcuts', 'keyboard', 'Help', () => app.showShortcuts(), { key: 'F1' });
   add('help.expressions', 'Expression reference', 'book', 'Help', () => app.showExpressionHelp(), { keywords: 'parameters formula math functions' });
   add('help.learn', 'Show the learning card', 'bulb', 'Help', () => app.toggleLearn(), { checked: () => !document.getElementById('learnCard').hidden });
-  add('help.guide', 'User guide (opens GitHub)', 'book', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/Portofolio_Tutorial/blob/main/docs/USER-GUIDE.md'));
-  add('help.source', 'Source code', 'github', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/Portofolio_Tutorial'));
-  add('help.issue', 'Report a problem', 'warning', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/Portofolio_Tutorial/issues/new'));
+  add('help.guide', 'User guide (opens GitHub)', 'book', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/TesserCAD/blob/main/docs/USER-GUIDE.md'));
+  add('help.source', 'Source code', 'github', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/TesserCAD'));
+  add('help.issue', 'Report a problem', 'warning', 'Help', () => app.openLink('https://github.com/samuelhtampubolon/TesserCAD/issues/new'));
   add('help.about', 'About TesserCAD', 'info', 'Help', () => app.showAbout());
 
   /* ---------------------------------------------------------------- studio

@@ -10,9 +10,9 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/samuelhtampubolon/Portofolio_Tutorial.git"
+    "url": "https://github.com/samuelhtampubolon/TesserCAD.git"
   },
-  "homepage": "https://github.com/samuelhtampubolon/Portofolio_Tutorial",
+  "homepage": "https://github.com/samuelhtampubolon/TesserCAD",
   "license": "MIT",
   "main": "main.cjs",
   "desktopName": "tessercad.desktop",
