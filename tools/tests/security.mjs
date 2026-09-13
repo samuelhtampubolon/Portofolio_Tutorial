@@ -14,7 +14,7 @@
  * relies on.
  */
 import 'three';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 
@@ -330,13 +330,32 @@ ok('the only network API in runtime code is the one same-origin data: read',
 ok('and the generated service worker only ever fetches same-origin requests',
   /url\.origin !== self\.location\.origin/.test(readFileSync(join(root, 'sw.js'), 'utf8')));
 
+// Runtime code only, which here means everything except the test tooling.
+// `tools/` never reaches a browser: it holds the service-worker generator,
+// whose output legitimately mentions fetch, and the browser suites, one of
+// which must name an external origin because its whole job is to prove the
+// policy refuses one. Excluding a directory from a security check is how blind
+// spots are made, so the exclusion is paid for by the assertion below it:
+// the attack suite is required to still contain the attack.
 const thirdParty = sources.filter((f) => {
-  if (/tools\/tests\//.test(f)) return false;
+  if (/tools[\\/]/.test(relative(root, f))) return false;
   return /https?:\/\/(?!github\.com\/samuelhtampubolon|localhost|127\.0\.0\.1|www\.w3\.org)/
     .test(codeOf(f));
 });
 ok('no source file references a third-party origin',
   thirdParty.length === 0, thirdParty.map(f => relative(root, f)).join(', '));
+
+// Paying for the exclusion above: the browser suite that attacks the policy
+// must still be attacking it. If someone deletes those three attacks, this
+// fails rather than the project quietly losing its only external check that
+// the Content-Security-Policy does anything at all.
+const cspSuite = join(root, 'tools/browser/csp.mjs');
+const cspSource = existsSync(cspSuite) ? readFileSync(cspSuite, 'utf8') : '';
+ok('the browser suite still attacks the policy with a real external origin',
+  /https:\/\/example\.com/.test(cspSource) &&
+  /document\.createElement\('script'\)/.test(cspSource) &&
+  /fetch\('https:/.test(cspSource),
+  cspSource ? 'present' : 'tools/browser/csp.mjs is missing');
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL SECURITY CHECKS PASS');
 process.exit(fails ? 1 : 0);

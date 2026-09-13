@@ -689,24 +689,27 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **868 headless checks** across sixteen suites, in about four seconds. It shims
+This runs **869 headless checks** across sixteen suites, in about four seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 
 ```
-ok   security        66 checks      ok   fasteners       73 checks
-ok   architecture    17 checks      ok   hygiene         48 checks
-ok   desktop         62 checks      ok   drawing         37 checks
-ok   core            58 checks      ok   tolerance       77 checks
-ok   history         40 checks      ok   merge           74 checks
-ok   parallel        29 checks      ok   design as code  87 checks
-ok   grammar         61 checks      ok   deviation       61 checks
+ok   security        67 checks      ok   entity          44 checks
+ok   architecture    20 checks      ok   history         40 checks
+ok   desktop         73 checks      ok   parallel        29 checks
+ok   bindings        20 checks      ok   grammar         61 checks
+ok   core            58 checks      ok   fasteners       73 checks
+ok   hygiene         48 checks      ok   drawing         37 checks
+ok   tolerance       77 checks      ok   merge           74 checks
+ok   design as code  87 checks      ok   deviation       61 checks
 ```
 
-The first three are not tests of features. `security` runs live attacks,
-`architecture` enforces the layering and `desktop` attacks the desktop shell's
-path handling, because a claim about structure or safety that is not checked is
-a claim that decays.
+The first four are not tests of features. `security` runs live attacks,
+`architecture` enforces the layering and the originality claim, `desktop`
+attacks the desktop shell's path handling, and `bindings` checks that every
+identifier in every module resolves to a declaration, an import or the
+platform. A claim about structure or safety that is not checked is a claim
+that decays.
 
 `npm run test:core` runs just the first one, which is the expression evaluator, the CSG kernel, the
 geometry builders, the rebuild engine, the DXF codec, the starter templates and the command
@@ -727,11 +730,30 @@ drill within a third of a millimetre of nominal minus pitch, which is what a tap
 a claim is about arithmetic, the check is against the arithmetic: float32 precision is verified
 against `Float32Array` itself, not against a formula this repo wrote.
 
-Another nine suites drive a real headless Chromium against a local server, adding roughly 350 more
-checks. They need Playwright, so they are not part of `npm test`, but they are what caught the phone
-chrome leaking onto the desktop layout, a 21-pixel touch target, and a drawing dialog that read a
-field by the wrong name. Two of them make claims that only a browser can settle: that a boolean
-really leaves the main thread, and that the app really opens with the network forced off.
+### Browser tests
+
+```bash
+npm install                              # installs playwright-core
+npx playwright-core install chromium     # the browser itself, about 150 MB
+npm run test:browser                     # or: node tools/browser/run.mjs app ui
+```
+
+Ten suites, 379 checks, driving a real headless Chromium against a server they
+start themselves.
+They are what caught the phone chrome leaking onto the desktop layout, a
+21-pixel touch target, and a drawing dialog that read a field by the wrong name.
+Several make claims only a browser can settle: that the pinned import-map hash
+is current so the app starts at all, that a boolean really leaves the main
+thread, that an injected script really does not execute, and that the phone
+layout does not overflow at 400 px.
+
+They need a 150 MB browser download and take a couple of minutes, which is why
+they are a separate command rather than part of `npm test` — that suite's value
+is that it runs in four seconds and downloads nothing.
+
+**These live in `tools/browser/` and are meant to be run by anyone.** They spent
+a while outside the repository while two documents cited them as evidence, which
+was a mistake: evidence nobody else can reproduce is not evidence.
 
 ## Deploying your own copy
 
@@ -1043,12 +1065,41 @@ it in the file header as well as in ATTRIBUTION.md. Everything else third-party
 is a published mathematical method, implemented from its statement and verified
 against an independent reference in the tests.
 
-Six of the eight open-source CAD projects this one is measured against are GPL
-or LGPL, which is exactly why nothing from them could be used in an MIT project
-even where it would have been convenient. What they contributed was problem
-framing, and that is acknowledged where it applies: `src/ui/operators.js` says
-in its header that modal transform operators are Blender's idea, reimplemented
-from the behaviour because it is better than the CAD convention.
+Ten of the thirteen open-source 3D and CAD projects this one is measured
+against are GPL, LGPL or AGPL, which is exactly why nothing from them could be
+used in an MIT project even where it would have been convenient. What they
+contributed was problem framing, and that is acknowledged where it applies:
+`src/ui/operators.js` says in its header that modal transform operators are
+Blender's idea, reimplemented from the behaviour because it is better than the
+CAD convention.
+
+That separation is enforced, not merely stated. `tools/tests/architecture.mjs`
+asserts that exactly five lines in `src/` mention any of the thirteen by name —
+three prose comments and two palette search keywords, each listed in
+ATTRIBUTION.md — and fails the build on a sixth.
+
+## How this compares to those thirteen
+
+**[COMPARISON.md](COMPARISON.md)** is the honest version, which means it is
+mostly about what this tool cannot do.
+
+The short version: TesserCAD is **not** "better than" FreeCAD, Blender or
+BRL-CAD, is not trying to be, and could not be. It leads on a specific set of
+properties that anyone can verify in minutes — no install, no build step so the
+code you audit is the code that runs, structure enforced by tests rather than
+by convention, a CSP the browser enforces, and engineering output most of them
+do not attempt — and it trails decisively elsewhere.
+
+The most important gap, stated plainly: **there is no B-rep kernel.** Booleans
+are on triangle meshes, so there are no NURBS surfaces, no fillets on arbitrary
+edges and no STEP or IGES exchange. If you need exact geometry or a STEP file
+for a manufacturer, FreeCAD, chili3d, CadQuery or build123d are not merely
+better at that — they are the only option. Sketch constraints belong to
+SolveSpace, mesh repair to MeshLab, rendering and animation to Blender.
+
+COMPARISON.md also says which comparisons are meaningless (feature counts,
+lines of code, "architecture" in the abstract) and when you should use
+something else instead of this.
 
 ## Licence
 

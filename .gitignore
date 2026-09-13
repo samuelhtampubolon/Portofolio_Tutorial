@@ -5,3 +5,4 @@ node_modules/
 # Desktop build output and the shell's own dependencies.
 dist-desktop/
 desktop/node_modules/
+test-artifacts/

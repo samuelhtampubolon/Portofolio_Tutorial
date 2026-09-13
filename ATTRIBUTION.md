@@ -165,7 +165,7 @@ acknowledging:
 | [Bforartists](https://github.com/Bforartists/Bforartists) | GPL-3.0 | That a capable tool's interface is a legitimate thing to rework on its own, and that discoverability is a feature rather than a concession. The single command registry generating six surfaces is this project's answer to the same problem |
 | [dust3d](https://github.com/huxingyi/dust3d) | MIT | That a modeller can start from intent rather than from geometry. `src/intel/brief.js` and `src/intel/speak.js` go from a requirement or a sentence to a feature tree, which is dust3d's premise applied to engineering rather than to organic form |
 
-**Licence note.** Nine of the thirteen are GPL, LGPL or AGPL. That is precisely
+**Licence note.** Ten of the thirteen are GPL, LGPL or AGPL. That is precisely
 why nothing from them could be used here even if it were technically
 convenient: copying GPL code into an MIT-licensed project is a licence
 violation, and "it was only a small function" is not a defence. chili3d is
@@ -217,7 +217,7 @@ enough to be argued with.
 ## 5. How to check any of this
 
 ```bash
-npm test                       # 868 checks, including the security suite
+npm test                       # 869 checks, including the security suite
 node tools/check-csp.mjs       # the policy's import-map hash is current
 grep -rniE "freecad|librecad|openscad|solvespace|brlcad|qcad|cadquery|blender|build123d|chili3d|meshlab|bforartists|dust3d" src/
 ```

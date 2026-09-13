@@ -1,4 +1,10 @@
-# Runs the test suite on pull requests and on branches other than main.
+# Runs the test suites on pull requests and on branches other than main.
+#
+# Two jobs, because they cost very different amounts. The headless suite runs
+# in about four seconds and downloads nothing, so it gates everything. The
+# browser suites need a 150 MB Chromium and a couple of minutes, so they run
+# beside it rather than in front of it: both must pass, but a typo does not
+# wait on a browser download to be reported.
 name: Tests
 
 on:
@@ -7,7 +13,8 @@ on:
   pull_request:
 
 jobs:
-  test:
+  headless:
+    name: Headless suites
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,3 +22,28 @@ jobs:
         with:
           node-version: 22
       - run: npm test
+
+  browser:
+    name: Browser suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      # playwright-core ships the installer CLI, so there is no need to pull in
+      # the full `playwright` package just to fetch a browser.
+      - name: Install Chromium
+        run: npx playwright-core install --with-deps chromium
+      - run: npm run test:browser
+
+      # Screenshots and any page the suites captured, kept only when something
+      # failed: a layout bug is far easier to read as an image than as a list
+      # of element bounds.
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: browser-failure-artifacts
+          path: test-artifacts/
+          if-no-files-found: ignore
