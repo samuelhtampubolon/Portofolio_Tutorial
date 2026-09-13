@@ -700,7 +700,7 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **885 headless checks** across sixteen suites, in about four seconds. It shims
+This runs **892 headless checks** across sixteen suites, in about four seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 

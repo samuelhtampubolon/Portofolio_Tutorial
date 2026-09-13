@@ -21,6 +21,20 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+  # Also on any pull request that touches the desktop build itself.
+  #
+  # Without this, a change to desktop/ was only ever exercised by a tag, which
+  # means the first time anyone learned it was broken was when a release
+  # produced nothing. That happened: upgrading electron-builder to 26 made
+  # `publisherName` an invalid key, the whole configuration was rejected, and
+  # the tests said nothing because they read the YAML as text rather than
+  # validating it. The release steps below are gated on a tag ref, so a pull
+  # request builds and verifies without publishing anything.
+  pull_request:
+    paths:
+      - 'desktop/**'
+      - '.github/workflows/desktop.yml'
+      - 'tools/verify-desktop.cjs'
 
 permissions:
   contents: write
@@ -115,6 +129,15 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: desktop
         run: xvfb-run -a ./node_modules/.bin/electron --no-sandbox ../tools/verify-desktop.cjs
+
+      # electron-builder validates its configuration against a schema and
+      # refuses the whole file for one unknown key, naming neither the key nor
+      # the reason. Checked on its own first so that failure arrives in
+      # seconds with the config in front of you, rather than after a
+      # three-minute package step.
+      - name: The packaging configuration is valid
+        working-directory: desktop
+        run: ./node_modules/.bin/electron-builder --config electron-builder.yml --dir --publish never
 
       - name: Package
         working-directory: desktop

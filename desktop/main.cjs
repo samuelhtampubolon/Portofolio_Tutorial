@@ -78,6 +78,53 @@ const ROOT = require('node:fs').existsSync(path.join(__dirname, 'index.html'))
  */
 app.commandLine.appendSwitch('enable-unsafe-swiftshader');
 
+/**
+ * Stop Chromium's own background services from reaching the network.
+ *
+ * The application makes no outbound request — its Content-Security-Policy
+ * permits no third-party origin, and the security suite proves the policy
+ * refuses one. None of that governs the browser *around* the page. Chromium
+ * ships a component updater, a domain-reliability reporter and a variations
+ * ("field trial") client that talk to Google infrastructure on their own
+ * schedule, outside any page and outside any policy the page can set.
+ *
+ * Running the packaged build with a network monitor showed exactly that: a
+ * connection attempt to redirector.gvt1.com, Google's component-update
+ * redirector, from a window that had loaded nothing but local files.
+ *
+ * For an application whose whole claim is that your documents stay on your
+ * machine, "the page made no request" is not the same promise as "the program
+ * made no request", and only the second one is worth making. These switches
+ * turn the difference off.
+ */
+app.commandLine.appendSwitch('disable-component-update');
+app.commandLine.appendSwitch('disable-domain-reliability');
+app.commandLine.appendSwitch('disable-features',
+  'MediaRouter,OptimizationHints,Translate,AutofillServerCommunication');
+app.commandLine.appendSwitch('metrics-recording-only');
+app.commandLine.appendSwitch('no-pings');
+
+/**
+ * And then the guarantee rather than the request.
+ *
+ * The switches above ask Chromium's background services not to call home.
+ * Measured against a network monitor, they are not enough: a packaged build
+ * with all of them set still attempted redirector.gvt1.com. Asking is not the
+ * same as preventing.
+ *
+ * This resolves every hostname to nothing, for every process in the
+ * application. It is safe here precisely because this build has nothing to
+ * resolve: the page is served from the `app://` scheme by an in-process
+ * handler, there is no loopback server, and the application makes no request
+ * of its own. External links are unaffected — `shell.openExternal` hands the
+ * URL to the real browser, which has its own resolver.
+ *
+ * So the claim the README makes about the desktop build is not "we turned the
+ * telemetry off". It is that the program cannot reach the network, and this
+ * line is why.
+ */
+app.commandLine.appendSwitch('host-resolver-rules', 'MAP * ~NOTFOUND');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
