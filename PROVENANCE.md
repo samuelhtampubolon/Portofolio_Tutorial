@@ -21,15 +21,15 @@ gives you legal advice has accurate facts to work from.
 | **Repository** | https://github.com/samuelhtampubolon/Portofolio_Tutorial |
 | **First commit** | 2026-05-16 |
 | **This record** | 2026-09-13 |
-| **Commits** | 44 |
+| **Commits** | `git rev-list --count HEAD` — counted rather than quoted, because the commit that corrects a quoted figure changes it |
 | **Released** | `v1.0.4`, with Windows and Linux builds. Earlier tags are superseded: `v1.0.2` and before bundled an end-of-life Electron, and `v1.0.3` built nothing because its packaging configuration was rejected |
 
 ### Size
 
 | | |
 |---|---|
-| Application source | 23,138 lines across 51 modules (`src/`) |
-| Test and build tooling | 7,731 lines (`tools/`, `desktop/`) |
+| Application source | 23,147 lines across 51 modules (`src/`) |
+| Test and build tooling | 8,403 lines across 36 files (`tools/`, `desktop/`) |
 | Third-party code included | three.js r169, vendored unmodified (`vendor/`) |
 | Runtime dependencies fetched at install | none |
 
