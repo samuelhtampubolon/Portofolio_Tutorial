@@ -57,9 +57,25 @@ jobs:
       # package-lock.json and fails if the manifest and the lock disagree. A
       # provenance attestation that says "built from this commit" is worth
       # rather less if the dependency tree could differ between two runs of it.
+      #
+      # Retried because electron's postinstall pulls a ~100 MB binary from
+      # GitHub releases, and that transfer fails often enough to have already
+      # broken a build here with ECONNRESET. Three attempts with a pause
+      # between them, rather than a whole release failing on one reset socket.
       - name: Install the shell's build tooling
         working-directory: desktop
-        run: npm ci --no-audit --no-fund
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            if npm ci --no-audit --no-fund; then
+              exit 0
+            fi
+            echo "npm ci failed (attempt $attempt of 3); retrying in $((attempt * 15))s"
+            rm -rf node_modules
+            sleep $((attempt * 15))
+          done
+          echo "npm ci failed three times; this is not a transient network error"
+          exit 1
 
       # Launch the real shell and drive the real application in it. The other
       # suites test the app in a browser or in Node; neither exercises what the
