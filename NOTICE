@@ -1,0 +1,20 @@
+TesserCAD
+Copyright (c) 2026 Samuel Tampubolon
+
+Licensed under the MIT License. See LICENSE.
+
+This product bundles third-party software:
+
+  three.js r169
+  Copyright (c) 2010-2024 three.js authors
+  Licensed under the MIT License.
+  Vendored unmodified in vendor/, with the upstream licence text preserved
+  at vendor/THREE-LICENSE.txt.
+
+  The BSP boolean decomposition in src/core/csg-core.js follows the approach
+  of Evan Wallace's csg.js (2011), MIT licensed. Rewritten over typed arrays;
+  the file header records the derivation.
+
+A full accounting, including the published mathematical methods used and the
+prior-art projects that informed the requirements but contributed no code,
+is in ATTRIBUTION.md.
