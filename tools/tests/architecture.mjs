@@ -13,7 +13,19 @@
  * the composition root the only file that knows about everything.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, dirname } from 'node:path';
+import { join, relative as nodeRelative, dirname, sep, win32 } from 'node:path';
+/**
+ * `path.relative` that always returns forward slashes.
+ *
+ * On Windows it returns `src\\core\\doc.js`, and every check below compares
+ * against literals like `'core/'` or splits on `/`. Without this the layering
+ * checks silently match nothing and the suite passes for the wrong reason,
+ * which is worse than the outright failure the root-path bug caused. One
+ * wrapper fixes every call site at once.
+ */
+const relative = (from, to) => nodeRelative(from, to).split(sep).join('/');
+
+import { fileURLToPath } from 'node:url';
 
 /**
  * Layers, lowest first. A file in one layer may import from a lower-numbered
@@ -49,7 +61,11 @@ const LAYERS = [
 
 const layerOf = (dir) => LAYERS.findIndex(group => group.includes(dir));
 
-const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+// `fileURLToPath`, not `.pathname`. On Windows a file URL's pathname is
+// `/D:/a/repo/...` — a leading slash before the drive letter — which is not a
+// path any filesystem call accepts. Every read against it fails, which is how
+// four suites came to fail on the Windows runner while passing everywhere else.
+const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/[\\/]$/, '');
 const srcRoot = join(root, 'src');
 
 let fails = 0;
@@ -251,6 +267,72 @@ ok('no module mentions a prior-art project outside the four that explain why',
 ok('and the count ATTRIBUTION.md publishes is the count there is',
   mentions.length === 5, `${mentions.length}: ${mentions.join(', ')}`);
 ok('the originality detector is not vacuous', PRIOR_ART.test('ported from FreeCAD'));
+
+/* ---------------------------- 10. the tooling runs on Windows too */
+
+/**
+ * Four suites passed everywhere and failed on the Windows runner, which is
+ * where a release is built, so `npm test` failing there means no .exe.
+ *
+ * Two causes, both in this project's own tooling rather than in the
+ * application. A file URL's `.pathname` is `/D:/a/repo/...` on Windows — a
+ * leading slash before the drive letter — which no filesystem call accepts.
+ * And `path.relative` returns backslashes there, so every comparison against a
+ * literal like `'core/'` quietly matched nothing.
+ *
+ * The second is the more dangerous of the two: it does not fail, it passes
+ * vacuously. A layering check that matches no files reports success. So the
+ * pattern is banned outright rather than left to be noticed.
+ */
+const toolFiles = [];
+const walkTools = (dir) => {
+  for (const name of readdirSync(dir)) {
+    const full = join(dir, name);
+    if (statSync(full).isDirectory()) walkTools(full);
+    else if (/\.(mjs|cjs|js)$/.test(name)) toolFiles.push(full);
+  }
+};
+walkTools(join(root, 'tools'));
+
+const urlPathname = toolFiles.filter(f =>
+  /import\.meta\.url[^\n]*\)\s*\.pathname/.test(readFileSync(f, 'utf8')));
+ok('no tool derives a filesystem path from a file URL’s .pathname',
+  urlPathname.length === 0,
+  urlPathname.map(f => relative(root, f)).join(', ') + ' (use fileURLToPath)');
+
+// Every tool that compares a relative path against a '/' literal has to
+// normalise separators first, or it matches nothing on Windows.
+const unnormalised = toolFiles.filter((f) => {
+  const body = readFileSync(f, 'utf8');
+  const comparesWithSlash = /relative\([^)]*\)\s*\.(startsWith|includes|split)\(\s*['"][^'"]*\//.test(body);
+  const normalises = /split\(sep\)\.join\(['"]\/['"]\)/.test(body);
+  return comparesWithSlash && !normalises;
+});
+ok('and every tool comparing a relative path to a "/" literal normalises first',
+  unnormalised.length === 0, unnormalised.map(f => relative(root, f)).join(', '));
+
+ok('the detectors are not vacuous', toolFiles.length > 10, `${toolFiles.length} tool files`);
+
+/**
+ * And the Windows behaviour itself, checked from here.
+ *
+ * Banning a pattern is only half the argument; the other half is showing what
+ * the pattern actually did. Node carries the Windows implementations on every
+ * platform — `path.win32`, and a `windows` option on `fileURLToPath` — so the
+ * failure that could only be seen on a Windows runner can be reproduced on a
+ * Linux one, which is where it will now be caught.
+ */
+const WIN_URL = 'file:///D:/a/repo/tools/tests/architecture.mjs';
+ok('a file URL’s .pathname really does start with a slash before the drive',
+  new URL('../..', WIN_URL).pathname.startsWith('/D:'));
+ok('and fileURLToPath really does remove it',
+  /^D:\\/.test(fileURLToPath(new URL('../..', WIN_URL), { windows: true })));
+
+const winRaw = win32.relative('D:\\a\\repo\\src', 'D:\\a\\repo\\src\\core\\doc.js');
+ok('a Windows relative path really does defeat a "core/" comparison',
+  winRaw === 'core\\doc.js' && !winRaw.startsWith('core/'), winRaw);
+ok('and normalising the separators really does fix it',
+  winRaw.split(win32.sep).join('/').startsWith('core/'));
 
 console.log(fails ? `\n${fails} FAILURES` : '\nALL ARCHITECTURE CHECKS PASS');
 process.exit(fails ? 1 : 0);

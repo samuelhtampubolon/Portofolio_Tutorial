@@ -15,7 +15,19 @@
  */
 import 'three';
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { join, relative as nodeRelative, sep } from 'node:path';
+/**
+ * `path.relative` that always returns forward slashes.
+ *
+ * On Windows it returns `src\\core\\doc.js`, and every check below compares
+ * against literals like `'core/'` or splits on `/`. Without this the layering
+ * checks silently match nothing and the suite passes for the wrong reason,
+ * which is worse than the outright failure the root-path bug caused. One
+ * wrapper fixes every call site at once.
+ */
+const relative = (from, to) => nodeRelative(from, to).split(sep).join('/');
+
+import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 
 globalThis.localStorage ??= { getItem: () => null, setItem: () => {}, removeItem: () => {} };
@@ -38,7 +50,11 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${extra ? '  - ' + extra : ''}`);
 };
 
-const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+// `fileURLToPath`, not `.pathname`. On Windows a file URL's pathname is
+// `/D:/a/repo/...` — a leading slash before the drive letter — which is not a
+// path any filesystem call accepts. Every read against it fails, which is how
+// four suites came to fail on the Windows runner while passing everywhere else.
+const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/[\\/]$/, '');
 const sources = [];
 const walk = (dir) => {
   for (const name of readdirSync(dir)) {
