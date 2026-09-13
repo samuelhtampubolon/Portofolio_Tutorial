@@ -329,6 +329,25 @@ if (existsSync(iconPath)) {
     isPng && w === h && w >= 256, `${w}x${h}`);
 }
 
+/*
+ * The licence travels with the binary.
+ *
+ * MIT requires its notice to be included in copies, and a 146 MB zip someone
+ * downloaded is a copy. Whoever has only the unzipped folder has to be able to
+ * read the terms from it, without being sent back to a repository they may
+ * never have visited.
+ *
+ * This is a packaging glob, so it fails by omission and silently: a file simply
+ * is not there, and the build succeeds. NOTICE was added to the repository and
+ * would have been left out of every binary until someone thought to look.
+ */
+for (const legal of ['LICENSE', 'NOTICE', 'ATTRIBUTION.md']) {
+  ok(`the packaged application carries ${legal}`,
+    new RegExp(`^\\s*-\\s*${legal}\\s*$`, 'm').test(builder));
+}
+ok('and vendor/** carries three.js’s own licence into the package',
+  /vendor\/\*\*/.test(builder) && existsSync(join(root, 'vendor/THREE-LICENSE.txt')));
+
 const ignored = readFileSync(join(root, '.gitignore'), 'utf8');
 ok('build output and the shell’s dependencies are not committed',
   /dist-desktop/.test(ignored) && /node_modules/.test(ignored), ignored.split('\n').join(' '));

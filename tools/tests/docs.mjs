@@ -134,6 +134,44 @@ ok('the desktop build pins a supported Electron major',
   Number(/(\d+)/.exec(electronRange)[1]) >= 38,
   `${electronRange} — Electron drops support for all but the newest majors`);
 
+/* ------------------------------------------- the licence GitHub can read */
+
+// GitHub reported this repository's licence as NOASSERTION, meaning its
+// detector could not match LICENSE to any known one, so the sidebar showed no
+// licence at all. The text was verbatim MIT; what defeated the match was a
+// two-line note appended after a rule, explaining that three.js is bundled.
+//
+// That matters more here than it would elsewhere. This project's licence story
+// is a substantive claim — MIT, with ten GPL-family projects deliberately kept
+// out of it — and a repository whose stated licence is "unrecognised" argues
+// against that claim on its own front page.
+//
+// The note moved to NOTICE, where bundled-component attribution belongs, and
+// where ATTRIBUTION.md, PROVENANCE.md and vendor/THREE-LICENSE.txt already
+// carried the same information. LICENSE is now nothing but the MIT text.
+//
+// Checked by normalising whitespace and comparing against the MIT body, so
+// this cannot regress by someone appending a helpful paragraph again.
+const MIT_BODY = [
+  'Permission is hereby granted, free of charge, to any person obtaining a copy',
+  'of this software and associated documentation files (the "Software"), to deal',
+  'in the Software without restriction, including without limitation the rights',
+  'to use, copy, modify, merge, publish, distribute, sublicense, and/or sell',
+  'copies of the Software, and to permit persons to whom the Software is',
+  'furnished to do so, subject to the following conditions:',
+].join(' ');
+
+const licence = readFileSync(join(root, 'LICENSE'), 'utf8');
+const flat = licence.replace(/\s+/g, ' ').trim();
+ok('LICENSE opens with the MIT title and a copyright line',
+  /^MIT License Copyright \(c\) \d{4} \S/.test(flat), flat.slice(0, 46));
+ok('and contains the MIT grant verbatim', flat.includes(MIT_BODY));
+const endsClean = /OTHER DEALINGS IN THE SOFTWARE\.$/.test(flat);
+ok('and ends on the MIT warranty clause, with nothing appended', endsClean,
+  endsClean ? '' : 'text after it makes GitHub report the licence as NOASSERTION; put it in NOTICE');
+ok('and the bundled-component notice exists, so nothing was lost in moving it',
+  existsSync(join(root, 'NOTICE')) && /three\.js/.test(readFileSync(join(root, 'NOTICE'), 'utf8')));
+
 /* ------------------------------------------------ the size of the thing */
 
 // PROVENANCE and COMPARISON both state how large this codebase is, and they
