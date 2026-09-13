@@ -51,7 +51,13 @@ files:
       - styles/**/*
       - vendor/**/*
       - assets/**/*
+      # The legal files travel with the binary. MIT requires its notice be
+      # included in copies, and a downloaded application is a copy: someone
+      # who has only the unzipped folder must be able to read the terms
+      # without going back to the repository. vendor/THREE-LICENSE.txt comes
+      # in with vendor/** above, which is how three.js's own notice ships.
       - LICENSE
+      - NOTICE
       - ATTRIBUTION.md
       - '!**/*.map'
 

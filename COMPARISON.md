@@ -19,7 +19,7 @@ properties, and trails them decisively on another. Both lists are below.
 | | |
 |---|---|
 | Source | 23,147 lines across 51 modules |
-| Tests | 894 headless in 16 suites, 385 across 10 browser suites, 17 in the real desktop shell |
+| Tests | 898 headless in 16 suites, 385 across 10 browser suites, 17 in the real desktop shell |
 | Runtime dependencies | 1 (three.js, vendored, unmodified, 924 KB) |
 | Build step | None |
 | `npm test`, cold | 3.7 seconds, downloads nothing |
@@ -225,6 +225,6 @@ MIT-licensed source and is credited for it.
 ---
 
 ```bash
-npm test                            # 894 checks, 16 suites, 3.7 seconds
+npm test                            # 898 checks, 16 suites, 3.7 seconds
 node tools/tests/architecture.mjs   # includes the originality check above
 ```
