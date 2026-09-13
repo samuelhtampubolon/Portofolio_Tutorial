@@ -3,7 +3,12 @@
   "productName": "TesserCAD",
   "version": "1.0.0",
   "private": true,
-  "description": "TesserCAD as a desktop application: the same static site, in a hardened window, with no network.",
+  "description": "TesserCAD parametric CAD, offline: the same application, in a hardened window, with no network access.",
+  "author": {
+    "name": "Samuel Tampubolon",
+    "url": "https://github.com/samuelhtampubolon"
+  },
+  "homepage": "https://github.com/samuelhtampubolon/Portofolio_Tutorial",
   "license": "MIT",
   "main": "main.cjs",
   "scripts": {

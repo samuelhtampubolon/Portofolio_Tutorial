@@ -168,28 +168,98 @@ it. That is strictly better for the person downloading it.
 `.github/workflows/desktop.yml` runs the full test suite before packaging
 anything, because a desktop build of a broken application is worse than none.
 
-### It is not code-signed
+### Windows security warnings: what was actually wrong, and what is fixed
 
-Windows SmartScreen will warn you, and macOS Gatekeeper will refuse the `.dmg`
-until you allow it explicitly. A code-signing certificate costs money and is
-tied to an identity; a self-signed one changes nothing except teaching people to
-click through warnings, which makes them less safe rather than more.
+An earlier build tripped Windows security warnings. Most of that was our fault,
+not a false positive about an unsigned file, and the causes are worth naming
+because three of the four are now fixed.
 
-**Verify the download instead.** Every release has a `.sha256` beside it:
+**The packaging format was the main cause.** The first release shipped
+electron-builder's `portable` target. That is not simply "an exe with no
+installer": it is a self-extracting archive that unpacks the whole application
+into `%TEMP%` and executes it from there. Described plainly, it is a single
+executable that writes a payload to a temporary directory and runs it, which is
+the defining runtime behaviour of a dropper. Endpoint protection classifies on
+behaviour, so the format itself was the problem, and no signature would have
+made that shape look benign.
+
+The portable target is gone. Windows now gets:
+
+| Download | What it is |
+|---|---|
+| `TesserCAD-<version>-windows-x64.zip` | **Recommended.** The unpacked application, archived. Nothing extracts itself, nothing writes to `%TEMP%`, and you can see every file before running anything |
+| `TesserCAD-<version>-setup.exe` | A per-user installer, for a Start-menu entry. Never elevates, never writes outside your profile |
+
+**The binary carried no version information.** `signAndEditExecutable` was set
+to `false` to express "there is no certificate here". That option governs
+signing *and resource editing*, so turning it off also stopped the real
+metadata being written, and the shipped file inherited Electron's generic
+resource: no product name, no description, no company, no copyright. An
+executable with no version information is itself a heuristic signal. The
+setting meant to be honest about a missing certificate was making the download
+look worse. It is on now; no certificate is configured, so nothing is signed,
+but the metadata is correct.
+
+**It compressed like a packer.** `compression: maximum` is solid LZMA, which
+makes a result statistically hard to tell from a packed executable, and packing
+is a signal in its own right. Now `normal`.
+
+**It opened a listening socket.** The shell used to serve the application from
+`http://127.0.0.1` on a random port. That is a common Electron pattern and it
+worked, but it meant every other process running as you could reach a server
+handing out the application's files for as long as the window was open. It is
+now served over a private `app://` scheme through a handler in
+`desktop/protocol.cjs`, so **no port is opened at all**. That is a genuine
+privacy improvement that happens also to remove a behaviour scanners notice.
+
+### What is still true: it is not code-signed
+
+**SmartScreen will still show an "unknown publisher" prompt**, and macOS
+Gatekeeper will still require an explicit override. Nothing above changes that,
+and it would be dishonest to imply otherwise. Only a code-signing certificate
+tied to a verified identity removes it. A self-signed certificate does not; it
+only teaches people to click through warnings.
+
+What you get instead is **stronger than a certificate for the question that
+actually matters** — did this binary come from this source:
+
+```bash
+gh attestation verify TesserCAD-1.0.0-windows-x64.zip \
+  --repo samuelhtampubolon/Portofolio_Tutorial
+```
+
+Every artefact is published with a signed build-provenance attestation naming
+the commit, the workflow and the runner that produced it, recorded in a public
+transparency log that the publisher does not control. A code-signing
+certificate says "someone paid for an identity". An attestation says "this
+exact file was built from that exact commit by that workflow", which is the
+claim you wanted.
+
+And the hash, for the offline case:
 
 ```powershell
-Get-FileHash TesserCAD-1.0.0-portable.exe -Algorithm SHA256
+Get-FileHash TesserCAD-1.0.0-windows-x64.zip -Algorithm SHA256
 ```
 
 ```bash
-sha256sum TesserCAD-1.0.0-portable.exe
+sha256sum TesserCAD-1.0.0-windows-x64.zip
 ```
 
-Compare against the published hash, and against the value in the workflow log
-for the run that built it. If they match, the file is the one built from the
-commit that run names. If you would rather not run an unsigned binary at all,
-that is a reasonable position: the hosted version is the same application and
-needs nothing installed.
+### If you want the warning gone entirely
+
+It needs a certificate, and the honest options are:
+
+- **SignPath Foundation** issues free code-signing certificates to open-source
+  projects. This project qualifies on licence and on being built in public CI.
+- **Azure Trusted Signing** is inexpensive but requires a registered legal
+  entity with three years of history.
+- A commercial OV/EV certificate, which costs money annually and, for OV, still
+  starts with no SmartScreen reputation.
+
+None of these can be set up from inside the repository; each needs the
+maintainer's identity. Until one is in place, the zip plus
+`gh attestation verify` is the recommended path, and **the hosted version needs
+no download at all** — it is the same application.
 
 ### The shell's posture
 
@@ -207,26 +277,32 @@ configured as strictly as Electron allows, not as its defaults suggest:
 | `webviewTag` | off | Nothing needs it, and it is an embedding surface |
 | `navigateOnDragDrop` | off | Dropping a file cannot navigate the window |
 | preload script | none | There is nothing the page needs from the host, so there is no bridge to audit |
+| listening sockets | none | The application is served through an in-process protocol handler, so no port exists for another local process to connect to |
 
 Navigation and window creation are refused outright; a CAD application has no
 reason to follow a link to another origin, and `https://` links are handed to
 your real browser instead. Every permission request is denied: no camera, no
 microphone, no geolocation, no notifications.
 
-The application is served over a loopback HTTP server bound to `127.0.0.1`
-rather than `file://`, for two reasons. ES modules and the import map need an
-HTTP origin. And under `file://` every local file is same-origin with the page,
-which is a worse position than the one this avoids.
+The application is served over a private `app://` scheme, registered as
+`standard` and `secure`, rather than `file://` or a loopback HTTP server. ES
+modules and the import map need a real origin, which `file://` does not
+usefully provide, and under `file://` every local file is same-origin with the
+page. A loopback server solves that but opens a port any local process can
+reach. The scheme solves it with no socket at all.
 
-That server is the only code in the desktop build that turns an untrusted string
-into a filesystem read, so it lives in `desktop/serve.cjs` separately from the
-Electron shell specifically so it can be tested. Containment is checked on the
+That handler is the only code in the desktop build that turns an untrusted
+string into a filesystem read, so it lives in `desktop/protocol.cjs` separately
+from the Electron shell specifically so it can be tested — it is a plain
+function from a `Request` to a `Response`, so the tests drive the same function
+the shell installs rather than a stand-in. Containment is checked on the
 **resolved, normalised** path, which is the only form of the check that holds:
-`..` segments, percent-encoded separators, double-encoded separators, backslashes
-and absolute paths all collapse before the comparison. An extension allowlist is
-a second, independent barrier, so a `.pem` or a `.env` inside the tree is refused
-even though it resolves inside it. Fourteen traversal encodings are attacked
-directly in `tools/tests/desktop.mjs`, and two more over a real socket.
+`..` segments, percent-encoded separators, double-encoded separators,
+backslashes and absolute paths all collapse before the comparison. An extension
+allowlist is a second, independent barrier, so a `.pem` or a `.env` inside the
+tree is refused even though it resolves inside it. Fourteen traversal encodings
+are attacked directly in `tools/tests/desktop.mjs`, and the suite also asserts
+that the build opens no listening socket and contains no loopback origin.
 
 The developer tools are deliberately left enabled. An application claiming your
 data never leaves the machine should let anyone open the network panel and
@@ -256,7 +332,7 @@ depend on them at all.
 ## Verifying the whole claim
 
 ```bash
-npm test                          # 854 checks, 16 suites, ~4 seconds
+npm test                          # 868 checks, 16 suites, ~4 seconds
 node tools/tests/security.mjs     # the attacks, on their own
 node tools/tests/desktop.mjs      # the desktop surface
 node tools/check-csp.mjs          # the policy's hash is current

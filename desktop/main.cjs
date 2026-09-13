@@ -29,15 +29,27 @@
  * navigated is a shell that can be pointed at a page somebody else controls.
  * External links open in the user's real browser, where they belong.
  *
- * Loaded over a loopback HTTP server rather than file://, because ES modules
- * and the import map require an HTTP origin, and because a file:// origin
- * makes every local file same-origin with the page. The server binds to
- * 127.0.0.1 only, serves exactly the files the application ships, and refuses
- * anything else.
+ * Loaded over a private `app://` scheme rather than file:// or a loopback HTTP
+ * server. ES modules and the import map need a real origin, which file:// does
+ * not usefully provide, and a loopback server would hand every other process
+ * on the machine a port that serves the user's documents for as long as the
+ * window is open. The scheme is registered standard and secure, so the page
+ * gets a proper origin and a secure context while the only route to the disk
+ * is the handler in protocol.cjs. See that file for the reasoning in full.
  */
-const { app, BrowserWindow, shell, Menu } = require('electron');
+const { app, BrowserWindow, shell, Menu, protocol } = require('electron');
 const path = require('node:path');
-const { startServer } = require('./serve.cjs');
+const { SCHEME, ORIGIN, createHandler } = require('./protocol.cjs');
+
+// Must be called before the app is ready: the scheme's privileges are fixed
+// when the renderer process starts. `standard` gives the page a real origin so
+// modules and the import map resolve; `secure` makes it a secure context, so
+// the application behaves exactly as it does over https rather than through a
+// degraded path that would need its own testing.
+protocol.registerSchemesAsPrivileged([{
+  scheme: SCHEME,
+  privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true },
+}]);
 
 // In a packaged build the application files sit beside this one inside the
 // archive; in a checkout they are one level up. Both resolve to the directory
@@ -46,7 +58,7 @@ const ROOT = require('node:fs').existsSync(path.join(__dirname, 'index.html'))
   ? __dirname
   : path.join(__dirname, '..');
 
-function createWindow(port) {
+function createWindow() {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -69,13 +81,11 @@ function createWindow(port) {
     },
   });
 
-  const origin = `http://127.0.0.1:${port}`;
-
   // Refuse to navigate anywhere but the app itself, and open anything else in
   // the user's browser. Both handlers are needed: the first covers links and
   // scripted navigation, the second covers target=_blank and window.open.
   win.webContents.on('will-navigate', (event, url) => {
-    if (!url.startsWith(`${origin}/`)) {
+    if (!url.startsWith(`${ORIGIN}/`)) {
       event.preventDefault();
       if (/^https:\/\//.test(url)) shell.openExternal(url);
     }
@@ -89,7 +99,7 @@ function createWindow(port) {
   win.webContents.on('will-attach-webview', (event) => event.preventDefault());
 
   win.once('ready-to-show', () => win.show());
-  win.loadURL(`${origin}/index.html`);
+  win.loadURL(`${ORIGIN}/index.html`);
   return win;
 }
 
@@ -126,15 +136,13 @@ if (!app.requestSingleInstanceLock()) {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
 
-  app.whenReady().then(async () => {
-    const server = await startServer(ROOT);
-    const { port } = server.address();
+  app.whenReady().then(() => {
+    protocol.handle(SCHEME, createHandler(ROOT));
     buildMenu();
-    createWindow(port);
+    createWindow();
     app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow(port);
+      if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
-    app.on('before-quit', () => server.close());
   });
 
   app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });

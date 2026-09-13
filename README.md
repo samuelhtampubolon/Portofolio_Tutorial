@@ -689,7 +689,7 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **854 headless checks** across sixteen suites, in about four seconds. It shims
+This runs **868 headless checks** across sixteen suites, in about four seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 
@@ -896,43 +896,89 @@ and are kept here as part of the same portfolio.
 
 ## Desktop application, for local and offline use
 
-A downloadable build is produced by CI from the same source, as a **portable
-Windows `.exe`** that runs from wherever you put it: no installer, no
-administrator prompt, no registry writes. AppImage and dmg builds come from the
-same workflow.
+A downloadable build is produced by CI from the same source. Windows gets two
+downloads, and **the zip is the one to take**:
 
-Get it from the [Releases](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+| Download | What it is |
+|---|---|
+| `TesserCAD-<version>-windows-x64.zip` | **Recommended.** The unpacked application, archived. Unzip it, run `TesserCAD.exe`. Nothing extracts itself, nothing writes to `%TEMP%`, and you can see every file before running anything |
+| `TesserCAD-<version>-setup.exe` | A per-user installer, if you want a Start-menu entry. Never elevates, never writes outside your profile |
+
+AppImage, tar.gz and dmg builds come from the same workflow. Get them from the
+[Releases](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
 page, or trigger **Actions → Desktop build** on your own fork.
 
+### About the Windows security warning
+
+An earlier release shipped a `portable` .exe and it tripped Windows security
+warnings. Most of that was genuinely our fault rather than a false positive
+about an unsigned file, and it is fixed:
+
+- **The format was the problem.** electron-builder's `portable` target is a
+  self-extracting archive that unpacks the whole application into `%TEMP%` and
+  runs it from there. That is the defining runtime behaviour of a dropper, and
+  protection software classifies on behaviour. It is gone, replaced by the zip
+  and the installer above.
+- **The binary carried no version information**, because the option that turns
+  off code-signing also turns off resource editing. An executable with no
+  product name, description or copyright is itself a heuristic signal. Fixed.
+- **It compressed like a packer** (`maximum` is solid LZMA). Now `normal`.
+- **It opened a listening port.** The shell used to serve the app from
+  `http://127.0.0.1`. It now uses a private `app://` scheme, so **no socket is
+  opened at all** — see below.
+
+**What has not changed: it is still not code-signed,** so SmartScreen will
+still show an "unknown publisher" prompt. Only a certificate tied to a verified
+identity removes that, and it would be dishonest to imply otherwise.
+
+What you get instead answers the question a certificate does not. Every
+artefact is published with a signed **build-provenance attestation** naming the
+commit, workflow and runner that produced it, in a public transparency log the
+publisher does not control:
+
+```bash
+gh attestation verify TesserCAD-1.0.0-windows-x64.zip \
+  --repo samuelhtampubolon/Portofolio_Tutorial
+```
+
+A certificate says someone paid for an identity. That says *this exact file was
+built from that exact commit*. [SECURITY.md](SECURITY.md) covers the
+certificate options, including the free one for open-source projects.
+
 **The binary is not committed to this repository, on purpose.** A committed
-`.exe` is a blob nobody can review, cannot be traced to the source it came from,
-and has to be trusted on the word of whoever pushed it. Built by CI, every
-artefact comes from a commit you can read, by a workflow you can read, on a
-runner nobody controls, with a SHA-256 published beside it. The full test suite
-runs before anything is packaged.
+`.exe` is a blob nobody can review and has to be trusted on the word of whoever
+pushed it. Built by CI, every artefact comes from a commit you can read, by a
+workflow you can read, on a runner nobody controls.
 
-It is **not code-signed**, so SmartScreen will warn you. A certificate costs
-money and a self-signed one only teaches people to click through warnings.
-Verify the hash instead — `Get-FileHash file.exe -Algorithm SHA256` — against
-the `.sha256` beside the download and against the workflow log of the run that
-built it. If you would rather not run an unsigned binary, the hosted version is
-the same application and installs nothing.
+### The shell
 
-The shell is a browser window with the browser taken away, which means the
-browser's sandbox is no longer doing the work. It is therefore configured as
-strictly as Electron allows rather than as its defaults suggest: renderer
-sandbox on, context isolation on, **node integration off** (without that, an
-XSS stops being a script injection and becomes code execution on your machine),
-no preload script, no webview, navigation to any other origin refused, every
-permission request denied, and the app served over a loopback server bound to
-`127.0.0.1` rather than `file://`, since under `file://` every local file is
-same-origin with the page.
+A browser window with the browser taken away, which means the browser's sandbox
+is no longer doing the work. It is configured as strictly as Electron allows
+rather than as its defaults suggest: renderer sandbox on, context isolation on,
+**node integration off** (without that, an XSS stops being a script injection
+and becomes code execution on your machine), no preload script, no webview,
+navigation to any other origin refused, and every permission request denied.
 
-That server is the only code in the desktop build that turns an untrusted string
-into a filesystem read, so it lives apart from the shell specifically so it can
-be tested: fourteen path-traversal encodings are attacked directly, plus two
-over a real socket, and the Electron posture is asserted as code so a future
-one-word relaxation fails the build instead of shipping in a binary.
+The application is served over a private `app://` scheme registered as standard
+and secure, rather than `file://` or a loopback HTTP server. ES modules and the
+import map need a real origin, which `file://` does not usefully give; a
+loopback server does, but hands every other process on your machine a port that
+serves your documents for as long as the window is open. The scheme has neither
+problem: **no port exists.**
+
+That handler is the only code in the desktop build that turns an untrusted
+string into a filesystem read, so it lives apart from the shell specifically so
+it can be tested. Fourteen path-traversal encodings are attacked directly, the
+Electron posture is asserted as code so a future one-word relaxation fails the
+build instead of shipping in a binary, and the suite asserts that no listening
+socket exists anywhere in the build.
+
+And the shell is launched and driven in CI before anything is packaged
+(`tools/verify-desktop.cjs`): seventeen checks that the real application works
+in the real window, including that the import map resolves over the scheme and
+that the boolean worker pool starts rather than silently falling back to one
+thread. Run it yourself with `npm run verify:desktop` after `cd desktop &&
+npm install`.
 
 Developer tools stay enabled. An application claiming your data never leaves
 your machine should let you open the network panel and confirm it.

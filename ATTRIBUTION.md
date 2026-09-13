@@ -126,16 +126,25 @@ states that nothing in the cost model should be shown to anyone as a price.
 
 ---
 
-## 3. The eight projects this one is measured against
+## 3. The thirteen projects this one is measured against
 
-The brief that shaped several rounds of this work named eight open-source CAD
-projects. It is worth being precise about the relationship, because
+The briefs that shaped several rounds of this work named thirteen open-source
+3D and CAD projects. It is worth being precise about the relationship, because
 "inspired by" is doing a lot of work in most READMEs.
 
 **No code, no data, no asset and no interface resource from any of these has
-been read, copied, ported, or adapted into this repository.** They are C++,
-Python, Qt and Tcl codebases; this is browser JavaScript with no build step. A
-line-level comparison would find nothing to compare.
+been read, copied, ported, or adapted into this repository.** Twelve are C++,
+Python, Qt, Rust and Tcl codebases; this is browser JavaScript with no build
+step. A line-level comparison would find nothing to compare.
+
+The thirteenth, **chili3d**, is the one that needs saying explicitly, because
+it is the only one that could plausibly be confused with this work: it is also
+a browser CAD application in TypeScript. It is not an ancestor of this one and
+no part of it is present here. The two differ at the foundation — chili3d
+compiles OpenCascade to WebAssembly and is therefore a real BREP kernel with
+NURBS surfaces and exact geometry; TesserCAD has a mesh/BSP kernel written in
+plain JavaScript and no BREP at all. That is a capability gap in chili3d's
+favour and it is recorded as such under Honest limitations, not glossed.
 
 What they contributed is **problem framing**, which is both legitimate and worth
 acknowledging:
@@ -150,13 +159,21 @@ acknowledging:
 | [QCAD](https://github.com/qcad/qcad) | GPL-3.0 / commercial | Layer, linetype and dimension conventions as users expect them, which are themselves ISO conventions |
 | [CadQuery](https://github.com/CadQuery/cadquery) | Apache-2.0 | That scripted CAD should produce an editable model and not a mesh |
 | [Blender](https://github.com/blender/blender) | GPL-2.0+ | Modal transform operators — press `G`, move, type a number. `src/ui/operators.js` says so in its header. This is the one interaction that was consciously reimplemented because it is better than the CAD convention, and reimplemented from the *behaviour*, not from Blender's source |
+| [build123d](https://github.com/gumyr/build123d) | Apache-2.0 | That a scripted CAD API reads better as a builder with explicit context than as a chained selector. `src/intel/spec.js` takes the opposite route — declarative text rather than a host language — but the argument for legibility over terseness is build123d's |
+| [chili3d](https://github.com/xiangechen/chili3d) | AGPL-3.0 | Proof that a browser is a serious place to put a CAD application, and the clearest available demonstration of what a real BREP kernel buys that a mesh kernel cannot. Named in Honest limitations for exactly that reason |
+| [MeshLab](https://github.com/cnr-isti-vclab/meshlab) | GPL-3.0 | That mesh repair and inspection deserve to be first-class operations with reported numbers, not a silent preprocessing step. `src/intel/hygiene.js` and `src/intel/deviation.js` report what they found and by how much, which is MeshLab's habit |
+| [Bforartists](https://github.com/Bforartists/Bforartists) | GPL-3.0 | That a capable tool's interface is a legitimate thing to rework on its own, and that discoverability is a feature rather than a concession. The single command registry generating six surfaces is this project's answer to the same problem |
+| [dust3d](https://github.com/huxingyi/dust3d) | MIT | That a modeller can start from intent rather than from geometry. `src/intel/brief.js` and `src/intel/speak.js` go from a requirement or a sentence to a feature tree, which is dust3d's premise applied to engineering rather than to organic form |
 
-**Licence note.** Six of the eight are GPL or LGPL. That is precisely why
-nothing from them could be used here even if it were technically convenient:
-copying GPL code into an MIT-licensed project is a licence violation, and
-"it was only a small function" is not a defence. Keeping this repository at
-arm's length from those codebases is a legal requirement and not only good
-manners. Every algorithm above is either original, from a permissively licensed
+**Licence note.** Nine of the thirteen are GPL, LGPL or AGPL. That is precisely
+why nothing from them could be used here even if it were technically
+convenient: copying GPL code into an MIT-licensed project is a licence
+violation, and "it was only a small function" is not a defence. chili3d is
+AGPL-3.0, which is stricter still, and it is also the project closest in kind
+to this one — so the separation there is not merely observed but worth being
+able to demonstrate, which is what the file-level originality check in section
+5 is for. Keeping this repository at arm's length from those codebases is a
+legal requirement and not only good manners. Every algorithm above is either original, from a permissively licensed
 source with its notice reproduced, or implemented from a published mathematical
 statement.
 
@@ -200,17 +217,26 @@ enough to be argued with.
 ## 5. How to check any of this
 
 ```bash
-npm test                       # 854 checks, including the security suite
+npm test                       # 868 checks, including the security suite
 node tools/check-csp.mjs       # the policy's import-map hash is current
-grep -rn "freecad\|librecad\|openscad\|solvespace\|brlcad\|qcad\|cadquery\|blender" src/
+grep -rniE "freecad|librecad|openscad|solvespace|brlcad|qcad|cadquery|blender|build123d|chili3d|meshlab|bforartists|dust3d" src/
 ```
 
-At the time of writing that last command returns five lines: four prose comments
-naming Blender or OpenSCAD to explain a design decision, and two command
-keywords so that searching the palette for "blender" or "openscad" finds the
-glTF export and the text editor. No vendored code, no copied file, no generated
-port. The csg.js derivation is credited in `src/core/csg-core.js` and in section
-1 above; it is not one of the eight.
+That last command returns **five lines**, and it returns them because the
+originality check in `tools/tests/architecture.mjs` asserts exactly which five,
+so the claim on this page fails the build rather than quietly going stale:
+
+| File | What it is |
+|---|---|
+| `src/ui/operators.js:9` | A header comment crediting Blender for modal transforms |
+| `src/intel/drawing.js:4` | A comment contrasting this approach with Blender's |
+| `src/intel/spec.js:4` | A comment arguing with OpenSCAD's premise |
+| `src/ui/commands.js:49`, `:347` | Two search keywords, so typing "blender" or "openscad" in the palette finds the glTF export and the text editor |
+
+Three prose comments and two search keywords. No vendored code, no copied file,
+no generated port, and not one line from any of the thirteen. The csg.js
+derivation is credited in `src/core/csg-core.js` and in section 1 above; it is
+not one of the thirteen.
 
 The security suite asserts separately that no file in the project executes a
 string as code and that none references a third-party origin.

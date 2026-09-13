@@ -11,7 +11,8 @@
     "serve": "python3 -m http.server 8080",
     "test:core": "node tools/setup-dev.mjs && node tools/test.mjs",
     "csp": "node tools/check-csp.mjs --write",
-    "sw": "node tools/build-sw.mjs"
+    "sw": "node tools/build-sw.mjs",
+    "verify:desktop": "cd desktop && electron ../tools/verify-desktop.cjs"
   },
   "keywords": [
     "cad",

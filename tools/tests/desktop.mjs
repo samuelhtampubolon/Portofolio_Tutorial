@@ -4,10 +4,13 @@
  * Two things are checked here, and they are the two that could turn a local
  * CAD application into a way of reading somebody's disk.
  *
- * The loopback server's path containment, attacked directly with the encodings
- * that defeat naive checks. This is the only code in the desktop build that
- * takes an untrusted string and turns it into a filesystem read, so it is the
- * only code in the desktop build that has to be tested rather than reviewed.
+ * The protocol handler's path containment, attacked directly with the
+ * encodings that defeat naive checks. This is the only code in the desktop
+ * build that takes an untrusted string and turns it into a filesystem read, so
+ * it is the only code in the desktop build that has to be tested rather than
+ * reviewed. It is a plain function of a Request returning a Response, which is
+ * why it can be driven here with no Electron present: what these checks
+ * exercise is the same function the shell installs, not a stand-in.
  *
  * The shell's Electron configuration, read out of main.cjs as text. That may
  * look like testing a comment, and it is not: `nodeIntegration: true` in a
@@ -22,7 +25,8 @@ import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { resolveSafely, startServer, TYPES } = require('../../desktop/serve.cjs');
+const { resolveSafely, createHandler, TYPES, ORIGIN, HOST } =
+  require('../../desktop/protocol.cjs');
 
 const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
 
@@ -96,21 +100,15 @@ ok('the allowlist covers what the application actually ships',
 ok('and nothing executable or credential-shaped',
   !['.exe', '.cjs', '.sh', '.bat', '.pem', '.key', '.env'].some(e => TYPES.has(e)));
 
-/* --- and over a real socket, end to end --- */
-const server = await startServer(appRoot);
-const { port } = server.address();
-const base = `http://127.0.0.1:${port}`;
+/* --- and through the real handler, end to end --- */
 
-ok('the server binds to loopback only, never to the network',
-  server.address().address === '127.0.0.1', server.address().address);
+const handle = createHandler(appRoot);
+const ask = (p, method = 'GET') => handle(new Request(`${ORIGIN}${p}`, { method }));
 
-const get = async (path, method = 'GET') => {
-  const res = await fetch(`${base}${path}`, { method });
-  return { status: res.status, body: await res.text(), headers: res.headers };
-};
-
-let res = await get('/index.html');
-ok('a real request for the app succeeds', res.status === 200 && res.body.includes('ok'));
+let res = await ask('/index.html');
+let body = await res.text();
+ok('a real request for the app succeeds', res.status === 200 && body.includes('ok'),
+  String(res.status));
 ok('and carries the headers a meta tag cannot deliver',
   res.headers.get('x-frame-options') === 'DENY' &&
   res.headers.get('x-content-type-options') === 'nosniff' &&
@@ -119,18 +117,40 @@ ok('and carries the headers a meta tag cannot deliver',
 ok('with the correct content type, so nosniff is meaningful',
   res.headers.get('content-type').startsWith('text/html'));
 
-res = await get('/../secret.txt');
-ok('a traversal over the wire returns 404 and no content',
-  res.status === 404 && !res.body.includes('PRIVATE'), `${res.status}`);
-res = await get('/%2e%2e%2fsecret.txt');
-ok('and so does an encoded one', res.status === 404 && !res.body.includes('PRIVATE'));
+res = await ask('/../secret.txt');
+body = await res.text();
+ok('a traversal through the handler returns 404 and no content',
+  res.status === 404 && !body.includes('PRIVATE'), String(res.status));
+res = await ask('/%2e%2e%2fsecret.txt');
+body = await res.text();
+ok('and so does an encoded one', res.status === 404 && !body.includes('PRIVATE'));
 
-res = await get('/index.html', 'POST');
-ok('the server accepts no method but GET and HEAD', res.status === 405, String(res.status));
-res = await get('/index.html', 'HEAD');
-ok('HEAD returns headers with no body', res.status === 200 && res.body === '');
+res = await ask('/index.html', 'POST');
+ok('the handler accepts no method but GET and HEAD', res.status === 405, String(res.status));
+res = await ask('/index.html', 'HEAD');
+ok('HEAD returns headers with no body',
+  res.status === 200 && (await res.text()) === '');
 
-server.close();
+// The scheme is standard, so a URL carries a host. Another host on the same
+// scheme is not this application and must not reach its files.
+res = await handle(new Request(`app://elsewhere/index.html`));
+ok('a request for another host on the scheme is refused', res.status === 404,
+  String(res.status));
+ok('and the application is served from its own origin only',
+  ORIGIN === `app://${HOST}`, ORIGIN);
+
+// The reason the scheme exists at all: no socket is opened, so nothing else on
+// the machine can reach the user's files while the window is open.
+// Read with comments removed, for the reason stripComments explains: both
+// files describe the loopback server they replaced, in prose that names the
+// very things these two checks rule out. `stripComments` is a hoisted
+// declaration, so calling it above its definition is fine.
+const desktopCode = stripComments(readFileSync(join(root, 'desktop/main.cjs'), 'utf8')) +
+  stripComments(readFileSync(join(root, 'desktop/protocol.cjs'), 'utf8'));
+ok('the desktop build opens no listening socket at all',
+  !/createServer|\.listen\(|require\(['"]node:(http|net)['"]\)/.test(desktopCode));
+ok('and does not fall back to a loopback origin',
+  !/127\.0\.0\.1|localhost/.test(desktopCode));
 
 /**
  * The shell with its comments removed.
@@ -195,8 +215,11 @@ ok('attaching a webview is refused', /will-attach-webview/.test(shell));
 ok('every permission request is denied',
   /setPermissionRequestHandler/.test(shell) && /callback\(false\)/.test(shell) &&
   /setPermissionCheckHandler\(\(\) => false\)/.test(shell));
-ok('the shell loads over loopback rather than file://',
-  /http:\/\/127\.0\.0\.1/.test(shell) && !/loadFile|file:\/\//.test(shell));
+ok('the shell loads over its own scheme, not file:// and not a loopback port',
+  /ORIGIN/.test(shell) && !/loadFile|file:\/\//.test(shell) && !/127\.0\.0\.1/.test(shell));
+ok('and the scheme is registered standard and secure, so the page is a real origin',
+  /registerSchemesAsPrivileged/.test(shell) &&
+  /standard:\s*true/.test(shell) && /secure:\s*true/.test(shell));
 ok('only one instance may run, so two windows cannot fight over local storage',
   /requestSingleInstanceLock/.test(shell));
 ok('the developer tools stay available, so anyone can verify the network claim',
@@ -204,8 +227,14 @@ ok('the developer tools stay available, so anyone can verify the network claim',
 
 /* --- and the packaging does not undo any of it --- */
 const builder = readFileSync(join(root, 'desktop/electron-builder.yml'), 'utf8');
-ok('the Windows build offers a portable executable that needs no installer',
-  /target: portable/.test(builder));
+ok('the Windows build ships a zip, which extracts nothing and runs nothing',
+  /target: zip/.test(builder));
+ok('and no self-extracting portable target, which is what tripped the warnings',
+  !/target: portable/.test(builder));
+ok('compression is not maximum, which would make the result look packed',
+  /compression: normal/.test(builder));
+ok('resource editing is on, so the binary carries real version metadata',
+  /signAndEditExecutable: true/.test(builder) && /publisherName:/.test(builder));
 ok('and the installer is per-user, so it never asks for administrator rights',
   /perMachine: false/.test(builder));
 ok('the shipped file list is explicit rather than a bundler’s output',
@@ -216,7 +245,15 @@ const workflow = readFileSync(join(root, '.github/workflows/desktop.yml'), 'utf8
 ok('the binary is built by CI from a readable commit, not committed as a blob',
   /runs-on: \$\{\{ matrix\.os \}\}/.test(workflow) && /windows-latest/.test(workflow));
 ok('the test suite runs before anything is packaged', /npm test/.test(workflow));
+ok('and the shell is launched and driven before the build is published',
+  /verify-desktop\.cjs/.test(workflow));
 ok('and a SHA-256 is published beside every artefact', /sha256sum/.test(workflow));
+ok('every artefact carries a signed build-provenance attestation, which a hash cannot give',
+  /attest-build-provenance/.test(workflow));
+ok('and the workflow takes only the two extra scopes that needs',
+  /id-token: write/.test(workflow) && /attestations: write/.test(workflow));
+ok('the zip is published alongside the installer, so the safer download exists',
+  /dist-desktop\/\*\.zip/.test(workflow));
 
 const ignored = readFileSync(join(root, '.gitignore'), 'utf8');
 ok('build output and the shell’s dependencies are not committed',

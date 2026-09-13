@@ -218,5 +218,39 @@ const undocumented = files.filter((f) => {
 ok('every module opens with a block comment saying what it is for',
   undocumented.length === 0, undocumented.map(f => relative(srcRoot, f)).join(', '));
 
+/* ------------------------- 9. originality, as a checkable property */
+
+/**
+ * ATTRIBUTION.md claims this repository contains nothing from the thirteen
+ * projects it is measured against, and lists the only five lines that mention
+ * any of them by name. A claim like that decays the moment someone adds a
+ * comment, so the list is asserted here rather than left as prose.
+ *
+ * Nine of the thirteen are GPL, LGPL or AGPL. Copying from them into an
+ * MIT-licensed project is a licence violation, not a style issue, which is why
+ * this is a build failure and not a note.
+ */
+const PRIOR_ART = /freecad|librecad|openscad|solvespace|brlcad|qcad|cadquery|blender|build123d|chili3d|meshlab|bforartists|dust3d/i;
+
+const EXPECTED_MENTIONS = new Set([
+  'ui/operators.js',      // credits Blender for modal transforms
+  'ui/commands.js',       // two palette search keywords
+  'intel/drawing.js',     // contrasts with Blender's approach
+  'intel/spec.js',        // argues with OpenSCAD's premise
+]);
+
+const mentions = [];
+for (const file of files) {
+  const rel = relative(srcRoot, file);
+  const lines = readFileSync(file, 'utf8').split('\n');
+  lines.forEach((line, i) => { if (PRIOR_ART.test(line)) mentions.push(`${rel}:${i + 1}`); });
+}
+const unexpected = mentions.filter(m => !EXPECTED_MENTIONS.has(m.split(':')[0]));
+ok('no module mentions a prior-art project outside the four that explain why',
+  unexpected.length === 0, unexpected.join(', '));
+ok('and the count ATTRIBUTION.md publishes is the count there is',
+  mentions.length === 5, `${mentions.length}: ${mentions.join(', ')}`);
+ok('the originality detector is not vacuous', PRIOR_ART.test('ported from FreeCAD'));
+
 console.log(fails ? `\n${fails} FAILURES` : '\nALL ARCHITECTURE CHECKS PASS');
 process.exit(fails ? 1 : 0);
