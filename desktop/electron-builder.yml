@@ -107,6 +107,11 @@ nsis:
 linux:
   target: [AppImage, tar.gz]
   category: Graphics
+  # Pairs with desktopName in package.json: it is what links a running window
+  # to its launcher entry, so the application shows its own icon in the taskbar
+  # rather than a generic one.
+  synopsis: Parametric CAD that runs offline
+  syncDesktopName: true
   artifactName: TesserCAD-${version}-linux-${arch}.${ext}
 
 mac:

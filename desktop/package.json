@@ -8,9 +8,14 @@
     "name": "Samuel Tampubolon",
     "url": "https://github.com/samuelhtampubolon"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/samuelhtampubolon/Portofolio_Tutorial.git"
+  },
   "homepage": "https://github.com/samuelhtampubolon/Portofolio_Tutorial",
   "license": "MIT",
   "main": "main.cjs",
+  "desktopName": "tessercad.desktop",
   "scripts": {
     "start": "electron .",
     "dist": "electron-builder --config electron-builder.yml --publish never"

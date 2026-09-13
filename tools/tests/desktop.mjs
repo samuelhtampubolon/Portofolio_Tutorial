@@ -19,7 +19,7 @@
  * times. Asserting the posture means a future change that relaxes it fails
  * here instead of shipping in a binary.
  */
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -301,6 +301,33 @@ ok('and the workflow takes only the two extra scopes that needs',
   /id-token: write/.test(workflow) && /attestations: write/.test(workflow));
 ok('the zip is published alongside the installer, so the safer download exists',
   /dist-desktop\/\*\.zip/.test(workflow));
+
+/*
+ * The application icon, which the build shipped without for four releases.
+ *
+ * electron-builder looks for desktop/build/icon.png and, finding none, uses
+ * Electron's default and says so in a line nobody read. Every published binary
+ * carried a generic icon in the taskbar and the Start menu.
+ *
+ * Checked here rather than left to that warning, because the failure is silent
+ * and cosmetic, which is exactly the kind that survives four releases. The
+ * dimensions are read out of the PNG header: electron-builder derives every
+ * size it needs, the Windows .ico included, from one square image of at least
+ * 256x256, and quietly produces a blurred icon from anything smaller.
+ *
+ * Regenerate it from assets/favicon.svg with `node tools/make-icon.mjs`.
+ */
+const iconPath = join(root, 'desktop/build/icon.png');
+ok('the desktop build has an application icon, rather than Electron’s default',
+  existsSync(iconPath), iconPath);
+if (existsSync(iconPath)) {
+  const png = readFileSync(iconPath);
+  const isPng = png.subarray(1, 4).toString() === 'PNG';
+  const w = isPng ? png.readUInt32BE(16) : 0;
+  const h = isPng ? png.readUInt32BE(20) : 0;
+  ok('and it is a square PNG large enough for every size derived from it',
+    isPng && w === h && w >= 256, `${w}x${h}`);
+}
 
 const ignored = readFileSync(join(root, '.gitignore'), 'utf8');
 ok('build output and the shell’s dependencies are not committed',
