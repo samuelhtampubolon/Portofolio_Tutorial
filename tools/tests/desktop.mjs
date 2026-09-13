@@ -21,6 +21,7 @@
  */
 import { readFileSync, writeFileSync, mkdtempSync, mkdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 
@@ -28,7 +29,11 @@ const require = createRequire(import.meta.url);
 const { resolveSafely, createHandler, TYPES, ORIGIN, HOST } =
   require('../../desktop/protocol.cjs');
 
-const root = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+// `fileURLToPath`, not `.pathname`. On Windows a file URL's pathname is
+// `/D:/a/repo/...` — a leading slash before the drive letter — which is not a
+// path any filesystem call accepts. Every read against it fails, which is how
+// four suites came to fail on the Windows runner while passing everywhere else.
+const root = fileURLToPath(new URL('../..', import.meta.url)).replace(/[\\/]$/, '');
 
 let fails = 0;
 const ok = (name, cond, extra = '') => {

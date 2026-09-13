@@ -28,9 +28,14 @@
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join, extname, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
 
-export const ROOT = new URL('../..', import.meta.url).pathname.replace(/\/$/, '');
+// `fileURLToPath`, not `.pathname`. On Windows a file URL's pathname is
+// `/D:/a/repo/...` — a leading slash before the drive letter — which is not a
+// path any filesystem call accepts. Every read against it fails, which is how
+// four suites came to fail on the Windows runner while passing everywhere else.
+export const ROOT = fileURLToPath(new URL('../..', import.meta.url)).replace(/[\\/]$/, '');
 
 /* ------------------------------------------------------------- Chromium */
 
