@@ -228,6 +228,15 @@ gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
   --repo samuelhtampubolon/TesserCAD
 ```
 
+> **Artefacts published before the repository was renamed** record the old name
+> inside their attestation, because the name is baked in at build time. The
+> v1.0.4 attestation names
+> `https://github.com/samuelhtampubolon/Portofolio_Tutorial@refs/tags/v1.0.4`,
+> so for those files pass `--repo samuelhtampubolon/Portofolio_Tutorial`
+> instead. The underlying repository id is unchanged (`1240582571`), and the
+> next release carries the new name, after which only the command above is
+> needed.
+
 Every artefact is published with a signed build-provenance attestation naming
 the commit, the workflow and the runner that produced it, recorded in a public
 transparency log that the publisher does not control. A code-signing

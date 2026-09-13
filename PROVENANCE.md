@@ -29,7 +29,7 @@ gives you legal advice has accurate facts to work from.
 | | |
 |---|---|
 | Application source | 23,147 lines across 51 modules (`src/`) |
-| Test and build tooling | 8,720 lines across 38 files (`tools/`, `desktop/`) |
+| Test and build tooling | 8,770 lines across 38 files (`tools/`, `desktop/`) |
 | Third-party code included | three.js r169, vendored unmodified (`vendor/`) |
 | Runtime dependencies fetched at install | none |
 
@@ -161,6 +161,15 @@ public transparency log the publisher does not control:
 gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
   --repo samuelhtampubolon/TesserCAD
 ```
+
+> **Artefacts published before the repository was renamed** record the old name
+> inside their attestation, because the name is baked in at build time. The
+> v1.0.4 attestation names
+> `https://github.com/samuelhtampubolon/Portofolio_Tutorial@refs/tags/v1.0.4`,
+> so for those files pass `--repo samuelhtampubolon/Portofolio_Tutorial`
+> instead. The underlying repository id is unchanged (`1240582571`), and the
+> next release carries the new name, after which only the command above is
+> needed.
 
 That is stronger evidence of origin than a code-signing certificate, which
 attests to an identity rather than to a source. For a filing, it means the

@@ -156,24 +156,74 @@ const repoUrl = JSON.parse(readFileSync(join(root, 'desktop/package.json'), 'utf
 const [, owner, repoName] = /github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/.exec(repoUrl);
 
 const LINKED = [...DOCS, 'dist/README.md', 'src/ui/commands.js', 'src/main.js'];
+
+// One exemption, as narrow as it can be made.
+//
+// A build-provenance attestation records the repository URL at the moment it
+// was signed, so the v1.0.4 artefacts name the old repository for ever, and
+// `gh attestation verify --repo <new name>` will not match them. The documents
+// have to say so, which means they have to write the old name down.
+//
+// Permitted only inside the blockquote that carries that caveat, identified by
+// the sentence it opens with, and only for this one name.
+//
+// The first attempt exempted any blockquote line, which was wrong and was
+// caught by testing it: the README's download callout is a blockquote too, so
+// a stale Releases link in the most prominent place on the page would have
+// passed. Scoped to the block, not the line.
+//
+// Everything else still fails: a stale link on an ordinary line, any other
+// wrong name even inside this block, and any stale Pages path anywhere, since
+// Pages has no redirect and there is no historical reason to name the old one.
+const HISTORICAL_NAME = 'Portofolio_Tutorial';
+const EXEMPT_BLOCK_MARKER = 'before the repository was renamed';
+
+/** Character ranges of blockquote blocks that carry the rename caveat. */
+function exemptRanges(body) {
+  const ranges = [];
+  let start = null, offset = 0;
+  const flush = (end) => {
+    if (start === null) return;
+    if (body.slice(start, end).includes(EXEMPT_BLOCK_MARKER)) ranges.push([start, end]);
+    start = null;
+  };
+  for (const line of body.split('\n')) {
+    const isQuote = line.trimStart().startsWith('>');
+    if (isQuote && start === null) start = offset;
+    if (!isQuote) flush(offset);
+    offset += line.length + 1;
+  }
+  flush(offset);
+  return ranges;
+}
+
 const badLinks = [];
 for (const doc of LINKED) {
   const path = join(root, doc);
   if (!existsSync(path)) continue;
   const body = readFileSync(path, 'utf8');
+  const exempt = exemptRanges(body);
+  const isHistoricalNote = (index, named) =>
+    named === HISTORICAL_NAME && exempt.some(([a, b]) => index >= a && index < b);
 
   // github.com/<this owner>/<anything> must be this repository.
   for (const m of body.matchAll(new RegExp(`github\\.com/${owner}/([A-Za-z0-9_.-]+)`, 'g'))) {
     const named = m[1].replace(/\.git$/, '');
-    if (named !== repoName) badLinks.push(`${doc}: github.com/${owner}/${named}`);
+    if (named === repoName) continue;
+    if (isHistoricalNote(m.index, named)) continue;
+    badLinks.push(`${doc}: github.com/${owner}/${named}`);
   }
   // <owner>.github.io/<path> is the Pages site, whose path is the repo name.
   for (const m of body.matchAll(new RegExp(`${owner}\\.github\\.io/([A-Za-z0-9_.-]+)`, 'g'))) {
+    // Pages has no redirect, so a stale live-app link is simply dead. No
+    // exemption here: there is no historical reason to name the old path.
     if (m[1] !== repoName) badLinks.push(`${doc}: ${owner}.github.io/${m[1]}`);
   }
   // `--repo owner/name` in the attestation examples.
   for (const m of body.matchAll(new RegExp(`--repo ${owner}/([A-Za-z0-9_.-]+)`, 'g'))) {
-    if (m[1] !== repoName) badLinks.push(`${doc}: --repo ${owner}/${m[1]}`);
+    if (m[1] === repoName) continue;
+    if (isHistoricalNote(m.index, m[1])) continue;
+    badLinks.push(`${doc}: --repo ${owner}/${m[1]}`);
   }
 }
 ok(`every link under ${owner}/ points at ${repoName}, the repository the manifest names`,

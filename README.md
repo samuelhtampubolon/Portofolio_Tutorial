@@ -982,6 +982,15 @@ gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
   --repo samuelhtampubolon/TesserCAD
 ```
 
+> **Artefacts published before the repository was renamed** record the old name
+> inside their attestation, because the name is baked in at build time. The
+> v1.0.4 attestation names
+> `https://github.com/samuelhtampubolon/Portofolio_Tutorial@refs/tags/v1.0.4`,
+> so for those files pass `--repo samuelhtampubolon/Portofolio_Tutorial`
+> instead. The underlying repository id is unchanged (`1240582571`), and the
+> next release carries the new name, after which only the command above is
+> needed.
+
 A certificate says someone paid for an identity. That says *this exact file was
 built from that exact commit*. [SECURITY.md](SECURITY.md) covers the
 certificate options, including the free one for open-source projects.
