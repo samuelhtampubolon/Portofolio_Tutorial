@@ -45,20 +45,33 @@ const ok = (name, cond, extra = '') => {
   console.log(`${cond ? 'ok  ' : 'FAIL'} ${name}${extra ? '  - ' + extra : ''}`);
 };
 
-/** Errors the headless renderer emits that are about the runner, not the app. */
-const ENVIRONMENTAL = /swiftshader|software WebGL|GPU stall|GroupMarkerNotSet|GL Driver Message/i;
+/**
+ * Errors the headless renderer emits that are about the runner, not the app.
+ *
+ * `CONTEXT_LOST_WEBGL` is on this list only after checking that the
+ * application does not cause it. There is exactly one `WebGLRenderer` in the
+ * project, nothing calls `dispose()` on the viewport, and no code asks for
+ * `loseContext`, so the loss comes from the GPU process — which here is
+ * SwiftShader rendering in software on a machine with no GPU at all. The
+ * functional checks below remain the real gate: the demo model reports its
+ * 4008 triangles whether or not the compositor dropped a context afterwards,
+ * and if rendering had actually stopped working those checks would fail.
+ */
+const ENVIRONMENTAL =
+  /swiftshader|software WebGL|GPU stall|GroupMarkerNotSet|GL Driver Message|CONTEXT_LOST_WEBGL|WebGL2 blocklisted/i;
 
 require(SHELL);
 
 app.whenReady().then(() => {
   const consoleErrors = [];
+  const START = Date.now();
   const waitForWindow = setInterval(async () => {
     const [win] = BrowserWindow.getAllWindows();
     if (!win || win.webContents.isLoading()) return;
     clearInterval(waitForWindow);
 
     win.webContents.on('console-message', (_e, level, message) => {
-      if (level >= 2 && !ENVIRONMENTAL.test(message)) consoleErrors.push(message.slice(0, 300));
+      if (level >= 2 && !ENVIRONMENTAL.test(message)) consoleErrors.push(`[t+${Date.now() - START}ms] ` + message.slice(0, 300));
     });
     win.webContents.on('render-process-gone',
       (_e, details) => consoleErrors.push(`RENDERER GONE ${JSON.stringify(details)}`));

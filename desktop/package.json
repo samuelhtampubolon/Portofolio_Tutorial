@@ -1,7 +1,7 @@
 {
   "name": "tessercad-desktop",
   "productName": "TesserCAD",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "TesserCAD parametric CAD, offline: the same application, in a hardened window, with no network access.",
   "author": {
@@ -16,7 +16,7 @@
     "dist": "electron-builder --config electron-builder.yml --publish never"
   },
   "devDependencies": {
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8"
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
   }
 }

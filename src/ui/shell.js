@@ -569,11 +569,26 @@ export function kv(pairs) {
   return dl;
 }
 
+/**
+ * The "nothing here yet" panel.
+ *
+ * `body` is markup by default, because most callers pass a sentence with a
+ * `<code>` or a `<b>` in it. That default is a footgun the moment a caller
+ * passes something a user typed, which is exactly what happened once: the
+ * feature-tree filter interpolated the search box's contents straight into it.
+ *
+ * So a caller with untrusted text passes `{ text }` instead and gets it
+ * escaped. Making the safe form available at the call site is what lets the
+ * dangerous form stay honest about what it is.
+ */
 export function emptyState(title, body, ic = 'bulb') {
+  const span = body && typeof body === 'object' && 'text' in body
+    ? el('span', { text: body.text })
+    : el('span', { html: body });
   return el('div', { class: 'empty-note' }, [
     icon(ic, { size: 26, cls: 'empty-icon' }),
     el('b', { text: title }),
-    el('span', { html: body }),
+    span,
   ]);
 }
 

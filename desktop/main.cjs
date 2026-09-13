@@ -58,6 +58,26 @@ const ROOT = require('node:fs').existsSync(path.join(__dirname, 'index.html'))
   ? __dirname
   : path.join(__dirname, '..');
 
+/**
+ * Let WebGL fall back to software rendering when there is no usable GPU.
+ *
+ * A 3D modeller that will not start is worse than a slow one, and from
+ * Chromium 137 the software fallback is refused unless this switch is present:
+ * the window opens, WebGL2 reports "blocklisted", and nothing draws. That is
+ * the state on a virtual machine, over remote desktop, on a locked-down
+ * corporate image, and on genuinely old hardware — not exotic places for a CAD
+ * user to be.
+ *
+ * The switch is named "unsafe" because software rendering has a weaker
+ * sandbox, and that warning is aimed at browsers running pages from the open
+ * web. This shell renders one local, first-party application over its own
+ * scheme, with no navigation anywhere else and a Content-Security-Policy that
+ * permits no third-party origin, so the content the warning is about cannot
+ * get here. On a machine with a working GPU this changes nothing: hardware
+ * WebGL is still chosen first.
+ */
+app.commandLine.appendSwitch('enable-unsafe-swiftshader');
+
 function createWindow() {
   const win = new BrowserWindow({
     width: 1440,

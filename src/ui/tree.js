@@ -133,7 +133,15 @@ function renderFeatures(app, host) {
     host.appendChild(node);
   }
 
-  if (q && !shown) host.appendChild(emptyState('No match', `Nothing called “${filterText}”.`, 'search'));
+  // `text`, not `html`: filterText is whatever the user typed into the search
+  // box, and emptyState's second argument is written into innerHTML. Typing a
+  // tag here really did build the element — the Content-Security-Policy
+  // refused the script it carried, but an injection that only a policy
+  // prevents is one directive away from working, and injected markup alone is
+  // enough to redress the interface. This message has no markup to lose.
+  if (q && !shown) {
+    host.appendChild(emptyState('No match', { text: `Nothing called “${filterText}”.` }, 'search'));
+  }
 
   if (build) {
     const bad = [...build.results.values()].filter(r => r.error);

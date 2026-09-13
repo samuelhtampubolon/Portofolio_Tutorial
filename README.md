@@ -700,7 +700,7 @@ and import maps require an HTTP origin. Any local server is fine.
 npm test
 ```
 
-This runs **869 headless checks** across sixteen suites, in about four seconds. It shims
+This runs **885 headless checks** across sixteen suites, in about four seconds. It shims
 `node_modules/three` from the vendored copy first; nothing is downloaded and there is nothing to
 install.
 
@@ -749,7 +749,7 @@ npx playwright-core install chromium     # the browser itself, about 150 MB
 npm run test:browser                     # or: node tools/browser/run.mjs app ui
 ```
 
-Ten suites, 379 checks, driving a real headless Chromium against a server they
+Ten suites, 382 checks, driving a real headless Chromium against a server they
 start themselves.
 They are what caught the phone chrome leaking onto the desktop layout, a
 21-pixel touch target, and a drawing dialog that read a field by the wrong name.
@@ -970,7 +970,7 @@ commit, workflow and runner that produced it, in a public transparency log the
 publisher does not control:
 
 ```bash
-gh attestation verify TesserCAD-1.0.2-windows-x64.zip \
+gh attestation verify TesserCAD-1.0.3-windows-x64.zip \
   --repo samuelhtampubolon/Portofolio_Tutorial
 ```
 
@@ -1088,6 +1088,19 @@ That separation is enforced, not merely stated. `tools/tests/architecture.mjs`
 asserts that exactly five lines in `src/` mention any of the thirteen by name —
 three prose comments and two palette search keywords, each listed in
 ATTRIBUTION.md — and fails the build on a sixth.
+
+## Provenance and authorship
+
+**[PROVENANCE.md](PROVENANCE.md)** records where this software came from, in
+the form someone assessing it formally would need: the development period, the
+size, the third-party material and its terms, what is claimed as original, and
+the known limitations.
+
+It states one thing up front rather than leaving it to be discovered: **the
+code was written with substantial AI assistance**, which is recorded in the git
+history itself through `Co-Authored-By` trailers. How copyright treats
+AI-assisted work is unsettled and varies by jurisdiction, so anyone registering
+or relying on this work should disclose that and take their own advice.
 
 ## How this compares to those thirteen
 

@@ -48,6 +48,23 @@ jobs:
         with:
           node-version: 20
 
+      # electron-builder takes ${version} from desktop/package.json, not from
+      # the tag, and nothing kept the two in step: v1.0.1 shipped files named
+      # TesserCAD-1.0.0-*. Checked here rather than left to be noticed, because
+      # the artefacts are already built and named by the time anyone looks.
+      - name: The tag and the manifest must agree on the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(node -p "require('./desktop/package.json').version")
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME says $tag, desktop/package.json says $manifest."
+            echo "::error::Every artefact would be named $manifest. Bump the manifest and re-tag."
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches manifest $manifest"
+
       # The web application has no dependencies, so its own checks run first
       # and cost nothing. A desktop build of a broken app is worse than none.
       - name: Verify the application before packaging it

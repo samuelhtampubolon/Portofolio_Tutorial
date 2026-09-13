@@ -19,7 +19,7 @@ properties, and trails them decisively on another. Both lists are below.
 | | |
 |---|---|
 | Source | 23,115 lines across 51 modules |
-| Tests | 869 headless in 16 suites, 379 across 10 browser suites, 17 in the real desktop shell |
+| Tests | 885 headless in 16 suites, 382 across 10 browser suites, 17 in the real desktop shell |
 | Runtime dependencies | 1 (three.js, vendored, unmodified, 924 KB) |
 | Build step | None |
 | `npm test`, cold | 3.7 seconds, downloads nothing |
@@ -69,7 +69,7 @@ A Content-Security-Policy of `default-src 'none'` with a SHA-256-pinned import
 map, no `eval` or `Function` anywhere in the project, validation enforced at the
 document's trust boundary rather than in a widget, prototype pollution closed at
 every parse boundary, and a desktop shell that opens **no listening socket** and
-denies every Electron permission. 66 security checks run attacks, not
+denies every Electron permission. 76 security checks run attacks, not
 assertions, and the CSP is verified in a real browser with zero violations.
 
 Several of the thirteen have scripting engines that execute untrusted model
@@ -225,6 +225,6 @@ MIT-licensed source and is credited for it.
 ---
 
 ```bash
-npm test                            # 869 checks, 16 suites, 3.7 seconds
+npm test                            # 885 checks, 16 suites, 3.7 seconds
 node tools/tests/architecture.mjs   # includes the originality check above
 ```
