@@ -22,7 +22,7 @@ gives you legal advice has accurate facts to work from.
 | **First commit** | 2026-05-16 |
 | **This record** | 2026-09-13 |
 | **Commits** | 44 |
-| **Released** | `v1.0.3`, with Windows, Linux and macOS builds. Earlier tags are superseded: `v1.0.2` and before bundled an end-of-life Electron |
+| **Released** | `v1.0.4`, with Windows and Linux builds. Earlier tags are superseded: `v1.0.2` and before bundled an end-of-life Electron, and `v1.0.3` built nothing because its packaging configuration was rejected |
 
 ### Size
 
@@ -143,7 +143,7 @@ repository checks and fails the build over.
 | | |
 |---|---|
 | Headless checks | 892 across 16 suites, about four seconds, downloads nothing |
-| Browser checks | 382 across 10 suites, in a real Chromium |
+| Browser checks | 383 across 10 browser suites, in a real Chromium |
 | Desktop checks | 17, driving the real application in a real Electron window |
 | Security checks | 76, which run attacks rather than assert outcomes |
 
@@ -158,7 +158,7 @@ attestation** recording the commit, workflow and runner that produced it, in a
 public transparency log the publisher does not control:
 
 ```bash
-gh attestation verify TesserCAD-1.0.3-windows-x64.zip \
+gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
   --repo samuelhtampubolon/Portofolio_Tutorial
 ```
 

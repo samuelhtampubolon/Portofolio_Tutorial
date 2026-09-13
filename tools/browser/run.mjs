@@ -16,7 +16,7 @@
  *   node tools/browser/run.mjs app ui        # just these two
  */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -108,4 +108,53 @@ console.log(
   `\n${checks} checks across ${selected.length} browser suites in ${total}s, ` +
   `${failed} suite${failed === 1 ? '' : 's'} failed`,
 );
+
+/*
+ * The documents quote this total, and only a full run can produce it.
+ *
+ * tools/tests/docs.mjs holds the headless count and the security count to what
+ * the suites actually report, but it cannot check this one: counting browser
+ * checks means starting a browser, which is the thing `npm test` exists to
+ * avoid. So the browser half of that promise is kept here, where the number is
+ * already in hand.
+ *
+ * Checked only on a full run. `node tools/browser/run.mjs app ui` legitimately
+ * produces a smaller number, and failing on that would be nonsense.
+ *
+ * Between them the two checks close the loop on the "tests passing" badge,
+ * which is the headless total plus this one plus the desktop shell's, and which
+ * was wrong by twenty-seven before this was written.
+ */
+if (!failed && selected.length === SUITES.length) {
+  const root = join(here, '../..');
+  const stale = [];
+  // "382 across 10 browser suites", "Ten suites, 382 checks", "382 in 10 browser suites"
+  const CLAIM = /(\d{2,5})\s*(?:checks?\s*)?(?:across|in)?\s*(?:\d+|ten)\s*browser suites|(?:ten|\d+) suites, (\d{2,5}) checks/gi;
+  for (const doc of ['README.md', 'COMPARISON.md', 'ARCHITECTURE.md', 'PROVENANCE.md']) {
+    const path = join(root, doc);
+    if (!existsSync(path)) continue;
+    const body = readFileSync(path, 'utf8');
+    for (const m of body.matchAll(CLAIM)) {
+      const claimed = Number(m[1] ?? m[2]);
+      if (claimed !== checks) stale.push(`${doc}: claims ${claimed}, actual ${checks}`);
+    }
+    const badge = /badge\/tests-(\d+)%20passing/.exec(body);
+    if (badge) {
+      const headless = /(\d{3,5}) headless/.exec(readFileSync(join(root, 'COMPARISON.md'), 'utf8'));
+      const desktop = /(\d+) in the real desktop shell/.exec(readFileSync(join(root, 'COMPARISON.md'), 'utf8'));
+      if (headless && desktop) {
+        const want = Number(headless[1]) + checks + Number(desktop[1]);
+        if (Number(badge[1]) !== want) {
+          stale.push(`${doc}: badge says ${badge[1]}, ${headless[1]} + ${checks} + ${desktop[1]} = ${want}`);
+        }
+      }
+    }
+  }
+  if (stale.length) {
+    console.log(`\nFAIL the documented browser check count is stale\n       ${stale.join('\n       ')}`);
+    process.exit(1);
+  }
+  console.log('ok   every document that quotes this total agrees with it');
+}
+
 process.exit(failed ? 1 : 0);

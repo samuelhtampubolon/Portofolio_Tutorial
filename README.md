@@ -8,7 +8,7 @@ No installation, no account, no server. Your model never leaves your machine.
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
 ![202 commands](https://img.shields.io/badge/commands-202-8957e5)
-![1265 tests](https://img.shields.io/badge/tests-1265%20passing-3da639)
+![1292 tests](https://img.shields.io/badge/tests-1292%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
 > **▶ Use it now, nothing to install:**
@@ -17,7 +17,10 @@ No installation, no account, no server. Your model never leaves your machine.
 > **⬇ Download it for offline use:**
 > [**Releases**](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
 > — take the Windows **`.zip`**, unzip, run `TesserCAD.exe`. No installer, no
-> administrator prompt. Linux and macOS builds are there too.
+> administrator prompt. There is a Linux build as well. **There is no macOS
+> build**: an unsigned, un-notarised `.dmg` is refused outright by Gatekeeper
+> rather than merely warned about, so offering one would waste your download.
+> Run the hosted version instead, or build it yourself from `desktop/`.
 >
 > The hosted copy also works offline once opened: **Help → Offline and
 > ownership** installs it, and it then runs with the network switched off.
@@ -749,7 +752,7 @@ npx playwright-core install chromium     # the browser itself, about 150 MB
 npm run test:browser                     # or: node tools/browser/run.mjs app ui
 ```
 
-Ten suites, 382 checks, driving a real headless Chromium against a server they
+Ten suites, 383 checks, driving a real headless Chromium against a server they
 start themselves.
 They are what caught the phone chrome leaking onto the desktop layout, a
 21-pixel touch target, and a drawing dialog that read a field by the wrong name.
@@ -970,7 +973,7 @@ commit, workflow and runner that produced it, in a public transparency log the
 publisher does not control:
 
 ```bash
-gh attestation verify TesserCAD-1.0.3-windows-x64.zip \
+gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
   --repo samuelhtampubolon/Portofolio_Tutorial
 ```
 

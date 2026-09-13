@@ -19,7 +19,7 @@ properties, and trails them decisively on another. Both lists are below.
 | | |
 |---|---|
 | Source | 23,115 lines across 51 modules |
-| Tests | 892 headless in 16 suites, 382 across 10 browser suites, 17 in the real desktop shell |
+| Tests | 892 headless in 16 suites, 383 across 10 browser suites, 17 in the real desktop shell |
 | Runtime dependencies | 1 (three.js, vendored, unmodified, 924 KB) |
 | Build step | None |
 | `npm test`, cold | 3.7 seconds, downloads nothing |

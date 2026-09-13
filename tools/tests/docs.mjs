@@ -71,14 +71,25 @@ console.log(`     headless: ${headlessTotal} checks / ${headlessSuites} suites �
 
 /* ------------------------------------------ what the documents claim it is */
 
-const DOCS = ['README.md', 'SECURITY.md', 'ARCHITECTURE.md', 'COMPARISON.md', 'ATTRIBUTION.md'];
+const DOCS = ['README.md', 'SECURITY.md', 'ARCHITECTURE.md', 'COMPARISON.md',
+  'ATTRIBUTION.md', 'PROVENANCE.md'];
 
 /**
- * Any integer adjacent to the words "headless" or "checks" is a claim about
- * the headless total. Narrow on purpose: a number next to "browser suites" or
- * "commands" is a different claim and is checked separately or not at all.
+ * Any integer adjacent to the word "headless", or to this suite's own suite
+ * count, is a claim about the headless total.
+ *
+ * The suite count is interpolated rather than written in, which is what keeps
+ * this narrow: "383 across 10 browser suites" is a different claim and must not
+ * match, and it does not, because 10 is not 16. An earlier version spelled the
+ * alternatives out by hand ("16 suites|sixteen suites|\d+ suites") and the last
+ * of those matched the browser total, which would have failed the build the
+ * first time the two numbers legitimately differed.
  */
-const HEADLESS_CLAIM = /(\d{3,5})\s*(?:headless\s+checks|checks(?:,| across| in)? (?:\d+ suites|16 suites|sixteen suites)|headless in)/gi;
+const HEADLESS_CLAIM = new RegExp(
+  String.raw`(\d{3,5})\s*(?:headless\b|checks?[,]?\s*(?:across|in)?\s*${headlessSuites}\s+suites`
+  + String.raw`|(?:across|in)\s+${headlessSuites}\s+suites)`,
+  'gi',
+);
 
 const wrong = [];
 for (const doc of DOCS) {
@@ -122,6 +133,52 @@ const electronRange = desktopPkg.devDependencies.electron;
 ok('the desktop build pins a supported Electron major',
   Number(/(\d+)/.exec(electronRange)[1]) >= 38,
   `${electronRange} — Electron drops support for all but the newest majors`);
+
+/* --------------------------- the version, and the platforms actually built */
+
+// Every artefact filename in the prose carries the version, and electron-builder
+// takes that version from desktop/package.json rather than from the git tag.
+// Three releases in a row shipped files whose names disagreed with something:
+// v1.0.1 built TesserCAD-1.0.0-*, and the documents then quoted 1.0.3 against a
+// manifest that had moved on. The workflow already refuses a tag that disagrees
+// with the manifest; this refuses a *document* that does.
+const version = JSON.parse(readFileSync(join(root, 'desktop/package.json'), 'utf8')).version;
+const FILENAME = /TesserCAD-(\d+\.\d+\.\d+)-/g;
+const misnamed = [];
+for (const doc of [...DOCS, 'PROVENANCE.md', 'dist/README.md']) {
+  const path = join(root, doc);
+  if (!existsSync(path)) continue;
+  for (const m of readFileSync(path, 'utf8').matchAll(FILENAME)) {
+    if (m[1] !== version) misnamed.push(`${doc}: ${m[0]} but the manifest says ${version}`);
+  }
+}
+ok('every artefact filename in the documents carries the manifest version',
+  misnamed.length === 0, misnamed.join(' | '));
+
+// A platform is only downloadable if the workflow matrix runs a job for it.
+// electron-builder.yml configures a mac target, which reads like macOS builds
+// exist; no runner ever produces one, and the README said they were "there
+// too". A promise of a download that is not built is the worst kind of
+// documentation error, because the reader only finds out after looking.
+//
+// Asserted as a *positive* requirement — while no macOS job exists, the README
+// has to carry the disclaimer — rather than by hunting the README for words
+// that sound like an offer. The first version of this check did the latter,
+// searching for ".dmg", and failed on the sentence explaining that there is no
+// macOS build. That is the fourth time in this repository that a check written
+// as a keyword search has matched its own documentation, so it is written the
+// other way round here: the thing that must be true is stated, not the thing
+// that must be absent.
+const workflow = readFileSync(join(root, '.github/workflows/desktop.yml'), 'utf8');
+const buildsMac = /os:\s*macos-/.test(workflow);
+const readmeDisclaimsMac = /no macOS\s+.{0,12}build/i.test(readme);
+ok('the README states plainly that macOS is not built, while it is not built',
+  buildsMac || readmeDisclaimsMac,
+  buildsMac ? 'a macOS job exists, so the disclaimer is no longer required'
+    : readmeDisclaimsMac
+      ? 'no macOS job in the matrix; the README says so'
+      : 'no macOS job in the matrix, and the README does not say so — add a macOS'
+        + ' runner to desktop.yml, or say plainly that there is no macOS build');
 
 /* ------------------------------------------- no document promises the past */
 
