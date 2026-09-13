@@ -373,6 +373,64 @@ ok('the browser suite still attacks the policy with a real external origin',
   /fetch\('https:/.test(cspSource),
   cspSource ? 'present' : 'tools/browser/csp.mjs is missing');
 
+/* ===================================== 9. nothing dynamic reaches innerHTML */
+
+/**
+ * `el(tag, { html })` writes its argument into innerHTML, and most callers
+ * pass a fixed sentence containing a `<code>` or a `<kbd>`. That is fine until
+ * a caller passes something a user typed, which is what happened: the
+ * feature-tree filter interpolated the search box's contents into the "No
+ * match" message. Typing a tag there really did build the element. The policy
+ * refused the script it carried, so it was never a working XSS — but an
+ * injection that only a Content-Security-Policy prevents is one directive away
+ * from being one, and injected markup on its own is enough to redress the
+ * interface into something that asks for a password.
+ *
+ * So every `html:` argument must be a literal, or be named here with the
+ * reason it is safe. An allowlist is the honest shape for this: the two
+ * dynamic sinks that remain are real, and pretending otherwise by writing a
+ * cleverer regex would only hide them.
+ */
+// A complete string literal after `html:` — single, double or backtick with no
+// interpolation. Matching the whole literal matters: a first attempt stopped at
+// the first comma and so reported every sentence containing one as dynamic.
+const HTML_LITERAL = /\bhtml:\s*(?:'(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*"|`(?:[^`\\$]|\\.)*`)\s*[,}]/;
+const HTML_ANY = /\bhtml:\s*/g;
+
+const REVIEWED_DYNAMIC = [
+  // Escapes every interpolated value through esc() before it reaches the
+  // string, and is attacked with five XSS payloads earlier in this suite.
+  'sheetToSVG(',
+  // A module-level constant list of function names, not user input.
+  'EXPR_HELP.map(',
+  // shell.js's own el() and emptyState(): these *are* the sink. What matters
+  // is what callers hand them, which is what the rest of this check covers.
+  'html: v',
+  'html: body',
+];
+
+const htmlSinks = [];
+for (const f of sources) {
+  const rel = relative(root, f);
+  if (!rel.startsWith('src/')) continue;
+  const body = codeOf(f);
+  for (const m of body.matchAll(HTML_ANY)) {
+    const tail = body.slice(m.index, m.index + 400);
+    if (HTML_LITERAL.test(tail)) continue;                       // a fixed string
+    if (REVIEWED_DYNAMIC.some(x => tail.includes(x))) continue;  // named above
+    htmlSinks.push(`${rel}: ${tail.split('\n')[0].slice(0, 70)}`);
+  }
+}
+ok('every innerHTML argument is a literal or a reviewed, escaping source',
+  htmlSinks.length === 0, htmlSinks.join(' | '));
+
+// Not vacuous: the exact shape the bug had must read as dynamic, and an
+// ordinary sentence — commas and all — must read as safe.
+ok('the detector reads an interpolated template as dynamic',
+  !HTML_LITERAL.test('html: `Nothing called ${filterText}.`,'));
+ok('and a literal containing commas and tags as safe',
+  HTML_LITERAL.test("html: 'Press <kbd>G</kbd>, then <kbd>X</kbd>, then type.',"));
+
 /**
  * The pinned hash is over bytes, so the bytes have to be the same everywhere.
  *

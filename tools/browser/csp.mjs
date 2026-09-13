@@ -98,5 +98,42 @@ const sameOriginWorks = await page.evaluate(
 check('while a request to the application\'s own origin still succeeds',
   sameOriginWorks);
 
+/* ------------------- and user input never becomes markup, policy or no */
+
+/**
+ * A real injection found by audit rather than by this suite.
+ *
+ * The feature-tree filter interpolated the search box's contents into a
+ * message that was written with innerHTML. Typing a tag there built the
+ * element. The policy refused the script it carried — `handlerRan` was false
+ * even before the fix — so it was never a working XSS, and that is exactly why
+ * it is worth a test: an injection prevented only by a Content-Security-Policy
+ * is one directive away from working, and markup alone is enough to dress the
+ * interface up as something that asks for a password.
+ *
+ * Checked here rather than statically because what matters is whether the
+ * browser builds an element, which only a browser can answer.
+ */
+const PAYLOAD = '<img src=x onerror="window.__xss=1"><b id="xss-probe">X</b>';
+const filter = await page.$('input[type=search]');
+if (!filter) {
+  check('the feature filter exists to be attacked', false, 'no search input found');
+} else {
+  await filter.fill(PAYLOAD);
+  await page.waitForTimeout(600);
+  const injection = await page.evaluate(() => ({
+    element: !!document.getElementById('xss-probe'),
+    img: !!document.querySelector('.empty-note img'),
+    handler: window.__xss === 1,
+    rendered: document.querySelector('.empty-note span')?.textContent?.slice(0, 60) || '',
+  }));
+  check('a tag typed into the feature filter does not become an element',
+    injection.element === false && injection.img === false,
+    JSON.stringify(injection));
+  check('and its handler never runs', injection.handler === false);
+  check('while the text itself is still shown, escaped',
+    injection.rendered.includes('<img'), injection.rendered);
+}
+
 await browser.close();
 process.exit(finish());
