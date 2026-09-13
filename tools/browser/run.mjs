@@ -50,14 +50,34 @@ if (requested.length && selected.length !== requested.length) {
   process.exit(2);
 }
 
+/**
+ * Each suite has its own watchdog, so this is the second line of defence: it
+ * covers a child that wedges before the watchdog is armed, or that ignores it.
+ * Generous on purpose — it is here to bound the worst case, not to police
+ * how long a suite takes.
+ */
+const SUITE_TIMEOUT_MS = 600_000;
+
 const run = (name) => new Promise((resolve) => {
   const file = join(here, `${name}.mjs`);
   if (!existsSync(file)) return resolve({ code: 1, out: `missing: ${file}` });
   const child = spawn(process.execPath, [file], { cwd: join(here, '..', '..') });
   let out = '';
+  let settled = false;
+  const done = (code) => { if (!settled) { settled = true; clearTimeout(timer); resolve({ code, out }); } };
+
+  const timer = setTimeout(() => {
+    out += `\nFAIL the suite ran past ${SUITE_TIMEOUT_MS / 1000}s and was killed\n`;
+    child.kill('SIGTERM');
+    // A wedged Chromium ignores SIGTERM often enough to be worth following up.
+    setTimeout(() => child.kill('SIGKILL'), 5000).unref();
+    done(1);
+  }, SUITE_TIMEOUT_MS);
+
   child.stdout.on('data', d => { out += d; });
   child.stderr.on('data', d => { out += d; });
-  child.on('close', code => resolve({ code, out }));
+  child.on('error', err => { out += `\nFAIL could not start the suite: ${err.message}\n`; done(1); });
+  child.on('close', done);
 });
 
 let failed = 0;

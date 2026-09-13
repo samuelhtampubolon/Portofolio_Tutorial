@@ -6,7 +6,9 @@
  * global test hook, so nothing here exists in the shipped application.
  */
 import { chromium } from 'playwright-core';
-import { chromePath, LAUNCH_ARGS, serve, shotsDir } from './harness.mjs';
+import { chromePath, LAUNCH_ARGS, serve, shotsDir, watchdog } from './harness.mjs';
+
+watchdog();
 
 const CHROME = chromePath();
 const SHOTS = shotsDir('studio');

@@ -6,7 +6,9 @@
  * offline and reloads.
  */
 import { chromium } from 'playwright-core';
-import { chromePath, LAUNCH_ARGS, serve, shotsDir } from './harness.mjs';
+import { chromePath, LAUNCH_ARGS, serve, shotsDir, watchdog } from './harness.mjs';
+
+watchdog();
 
 const CHROME = chromePath();
 const SHOTS = shotsDir('offline');

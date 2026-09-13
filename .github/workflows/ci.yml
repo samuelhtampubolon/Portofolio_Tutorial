@@ -12,10 +12,19 @@ on:
     branches-ignore: [main]
   pull_request:
 
+# A push to a branch with an open PR triggers this twice: once for the push and
+# once for the PR sync. Both run the full browser suite, which is minutes of
+# runner time spent proving the same thing. Newer runs supersede older ones for
+# the same ref.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   headless:
     name: Headless suites
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,6 +35,7 @@ jobs:
   browser:
     name: Browser suites
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

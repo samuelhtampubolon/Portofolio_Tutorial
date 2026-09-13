@@ -141,6 +141,36 @@ export function serve(root = ROOT) {
   });
 }
 
+/* ------------------------------------------------------------ watchdog */
+
+/**
+ * Turn a hang into a failure with a message.
+ *
+ * What this does *not* guard is worth stating, because it was the first guess
+ * and it was wrong: a suite that throws before `browser.close()` does not
+ * hang. Node tears the process down on an unhandled top-level rejection even
+ * with a Chromium still open — measured, not assumed.
+ *
+ * What does hang is an await that never settles: a Playwright wait given no
+ * timeout, a page event that never fires, a promise nothing resolves. The
+ * browser then keeps the event loop alive with nothing left to move it, and
+ * with no timeout on the CI job that holds a runner for GitHub's default six
+ * hours before anyone learns anything. This turns that into one line and a
+ * non-zero exit.
+ *
+ * `unref` matters: the timer must not itself be a reason the process stays up,
+ * or it would add the very delay it exists to prevent.
+ */
+export function watchdog(seconds = 420) {
+  const timer = setTimeout(() => {
+    console.log(`\nFAIL the suite did not finish within ${seconds}s and was stopped`);
+    console.log('     (an await that never settled: a wait with no timeout, or an event that never fired)');
+    process.exit(1);
+  }, seconds * 1000);
+  timer.unref();
+  return timer;
+}
+
 /* ----------------------------------------------------------- reporting */
 
 /** Where screenshots go. Gitignored, so a failure can be looked at. */

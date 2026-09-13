@@ -7,7 +7,9 @@
  * narrow width, which is why the suite uses a real touch context.
  */
 import { chromium, devices } from 'playwright-core';
-import { chromePath, LAUNCH_ARGS, serve, shotsDir } from './harness.mjs';
+import { chromePath, LAUNCH_ARGS, serve, shotsDir, watchdog } from './harness.mjs';
+
+watchdog();
 
 const CHROME = chromePath();
 const SHOTS = shotsDir('touch');

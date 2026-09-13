@@ -22,7 +22,9 @@
  * to have fully booted, and only then attacks it.
  */
 import { chromium } from 'playwright-core';
-import { chromePath, LAUNCH_ARGS, serve, reporter } from './harness.mjs';
+import { chromePath, LAUNCH_ARGS, serve, reporter, watchdog } from './harness.mjs';
+
+watchdog();
 
 const { check, finish } = reporter();
 const server = await serve();

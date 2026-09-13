@@ -2,7 +2,9 @@
  * Tablet tier checks: layout, the dock, the compact menu, and touch reach.
  */
 import { chromium } from 'playwright-core';
-import { chromePath, LAUNCH_ARGS, serve, shotsDir } from './harness.mjs';
+import { chromePath, LAUNCH_ARGS, serve, shotsDir, watchdog } from './harness.mjs';
+
+watchdog();
 
 const CHROME = chromePath();
 const SHOTS = shotsDir('responsive');
