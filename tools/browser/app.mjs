@@ -34,6 +34,25 @@ page.on('pageerror', e => errors.push('PAGEERROR: ' + e.message + ' | ' + (e.sta
 const results = [];
 const check = (name, ok, extra='') => { results.push(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? '  — ' + extra : ''}`); };
 
+/**
+ * Wait until the last top-level feature is the one just added and has built.
+ *
+ * These checks used to sleep a fixed number of milliseconds and then read
+ * `topLevel.at(-1)`. That is a race, and it lost on GitHub's runner: the
+ * mirror check read back a `patternCircular`, because 900ms was enough on a
+ * four-core laptop and not on a two-core shared machine. The failure looked
+ * like a broken mirror and was a slow computer.
+ *
+ * Waiting for the condition rather than for the clock makes the suite
+ * deterministic on any machine, and it is also faster on a quick one.
+ */
+const settled = (type, timeout = 30000) => page.waitForFunction((want) => {
+  const f = window.tesserCAD?.build?.topLevel?.at(-1);
+  if (!f || f.type !== want) return false;
+  const r = window.tesserCAD.build.results.get(f.id);
+  return !!r && (!!r.error || (r.instances && r.instances.length > 0));
+}, type, { timeout });
+
 await page.goto(URL, { waitUntil: 'load' });
 await page.waitForFunction(() => window.tesserCAD && window.tesserCAD.build, null, { timeout: 20000 });
 await page.waitForTimeout(1500);
@@ -109,17 +128,17 @@ await page.evaluate(async () => {
   tesserCAD.draft.selection = new Set(ids);
   tesserCAD.createFromProfile('revolve');
 });
-await page.waitForTimeout(1200);
+await settled('revolve');
 s = await page.evaluate(() => { const f = tesserCAD.build.topLevel.at(-1); const r = tesserCAD.build.results.get(f.id); return { type: f.type, err: r.error, tris: r.instances[0]?.geometry.attributes.position.count/3 }; });
 check('revolve from 2D profile', s.type === 'revolve' && !s.err && s.tris > 100, JSON.stringify(s));
 
 // 7. patterns + mirror
 await page.evaluate(() => { tesserCAD.select([tesserCAD.build.topLevel.at(-1).id]); tesserCAD.addModifier('patternCircular'); });
-await page.waitForTimeout(800);
+await settled('patternCircular');
 s = await page.evaluate(() => { const f = tesserCAD.build.topLevel.at(-1); const r = tesserCAD.build.results.get(f.id); return { type: f.type, err: r.error, n: r.instances.length }; });
 check('circular pattern', s.type === 'patternCircular' && !s.err && s.n === 6, JSON.stringify(s));
 await page.evaluate(() => { tesserCAD.select([tesserCAD.build.topLevel.at(-1).id]); tesserCAD.addModifier('mirror'); });
-await page.waitForTimeout(900);
+await settled('mirror');
 s = await page.evaluate(() => { const f = tesserCAD.build.topLevel.at(-1); const r = tesserCAD.build.results.get(f.id); return { type: f.type, err: r.error, n: r.instances.length }; });
 check('mirror', s.type === 'mirror' && !s.err && s.n === 12, JSON.stringify(s));
 
