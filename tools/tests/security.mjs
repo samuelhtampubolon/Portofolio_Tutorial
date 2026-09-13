@@ -357,5 +357,43 @@ ok('the browser suite still attacks the policy with a real external origin',
   /fetch\('https:/.test(cspSource),
   cspSource ? 'present' : 'tools/browser/csp.mjs is missing');
 
+/**
+ * The pinned hash is over bytes, so the bytes have to be the same everywhere.
+ *
+ * Git on Windows checks out text as CRLF by default. That changes index.html's
+ * bytes, which changes the hash of the inline import map, which makes the
+ * browser refuse the map and resolve no modules — the application does not
+ * start at all. On the hosted copy this never showed, because the blob served
+ * from the repository is LF; it showed the first time a Windows runner built
+ * the desktop package, which bundles files from a Windows checkout, and would
+ * have shipped an .exe that could not boot.
+ *
+ * .gitattributes is the fix, so .gitattributes is checked.
+ */
+const attributesPath = join(root, '.gitattributes');
+const attributes = existsSync(attributesPath) ? readFileSync(attributesPath, 'utf8') : '';
+ok('a .gitattributes exists, so checkouts do not differ by platform',
+  attributes.length > 0, 'missing: a Windows clone would hash differently');
+ok('and it forces LF in the working tree, which is what the pinned hash assumes',
+  /^\s*\*\s+text=auto\s+eol=lf\s*$/m.test(attributes),
+  'expected a line: * text=auto eol=lf');
+
+// The hash in the policy must be the one for the bytes as committed. This is
+// what tools/check-csp.mjs computes; asserted here too so the security suite
+// fails on its own rather than relying on a separate script having been run.
+const indexSource = readFileSync(join(root, 'index.html'), 'utf8');
+const mapMatch = /<script type="importmap">([\s\S]*?)<\/script>/.exec(indexSource);
+ok('the import map is present and inline, as the policy assumes', !!mapMatch);
+if (mapMatch) {
+  const digest = createHash('sha256').update(mapMatch[1], 'utf8').digest('base64');
+  ok('and the policy pins the hash of exactly those bytes',
+    indexSource.includes(`'sha256-${digest}'`), `computed sha256-${digest}`);
+  const crlfDigest = createHash('sha256')
+    .update(mapMatch[1].replace(/\r?\n/g, '\r\n'), 'utf8').digest('base64');
+  ok('the two differ, so this check is not vacuous', digest !== crlfDigest);
+  ok('and the CRLF hash is not what is pinned, which is the bug this caught',
+    !indexSource.includes(`'sha256-${crlfDigest}'`));
+}
+
 console.log(fails ? `\n${fails} FAILURES` : '\nALL SECURITY CHECKS PASS');
 process.exit(fails ? 1 : 0);

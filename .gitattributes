@@ -1,0 +1,38 @@
+# Every checkout, on every platform, byte for byte the same.
+#
+# This is not tidiness. index.html pins its inline import map in the
+# Content-Security-Policy by SHA-256, and a hash is over bytes. Git on Windows
+# checks out text with CRLF by default, which changes those bytes and so
+# changes the hash — the same file, hashing differently depending on who cloned
+# it.
+#
+# The consequence was not a failing test, it was a broken product. The Windows
+# desktop build packages files from a Windows checkout, so index.html inside
+# the shipped .exe would carry CRLF, the browser would compute the CRLF hash,
+# compare it against the LF hash written in the policy, refuse the import map,
+# and resolve no modules at all. The application would not start. It was caught
+# by `npm test` failing on the Windows runner before anything was published.
+#
+# eol=lf forces LF in the working tree everywhere, so the bytes the hash was
+# computed over are the bytes every platform gets.
+* text=auto eol=lf
+
+# Binaries must never be touched. Listing them is what keeps `text=auto` from
+# guessing wrong on a file that merely looks like text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.gif binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.zip binary
+*.7z binary
+*.gz binary
+*.exe binary
+*.dll binary
+*.dmg binary
+*.AppImage binary
+*.asar binary
+*.stl binary
