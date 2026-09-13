@@ -1,6 +1,6 @@
 {
   "name": "tessercad",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "A free, browser-based parametric 3D CAD, 2D drafting and 4D simulation studio.",
   "type": "module",

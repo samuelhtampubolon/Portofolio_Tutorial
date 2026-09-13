@@ -20,9 +20,9 @@ gives you legal advice has accurate facts to work from.
 | **Licence** | MIT (see [LICENSE](LICENSE)) |
 | **Repository** | https://github.com/samuelhtampubolon/Portofolio_Tutorial |
 | **First commit** | 2026-05-16 |
-| **This record** | 2026-09-13, at commit `6c15d57` |
+| **This record** | 2026-09-13 |
 | **Commits** | 44 |
-| **Released** | `v1.0.2`, with Windows, Linux and macOS builds |
+| **Released** | `v1.0.3`, with Windows, Linux and macOS builds. Earlier tags are superseded: `v1.0.2` and before bundled an end-of-life Electron |
 
 ### Size
 
@@ -158,7 +158,7 @@ attestation** recording the commit, workflow and runner that produced it, in a
 public transparency log the publisher does not control:
 
 ```bash
-gh attestation verify TesserCAD-1.0.2-windows-x64.zip \
+gh attestation verify TesserCAD-1.0.3-windows-x64.zip \
   --repo samuelhtampubolon/Portofolio_Tutorial
 ```
 

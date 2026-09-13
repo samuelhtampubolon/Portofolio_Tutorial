@@ -1,7 +1,7 @@
 {
   "name": "tessercad-desktop",
   "productName": "TesserCAD",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "private": true,
   "description": "TesserCAD parametric CAD, offline: the same application, in a hardened window, with no network access.",
   "author": {
