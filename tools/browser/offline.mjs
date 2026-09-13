@@ -35,19 +35,28 @@ await page.evaluate(() => document.querySelectorAll('.tour, .learn-card, #tourCa
 
 // Wait for the cache to be *populated*, not merely for the worker to be in
 // control. Those are two different moments: a service worker takes control as
-// soon as it activates, and only then works through the file list. Waiting on
-// `controlled` alone passed consistently on an idle machine and failed when
-// three other suites were running, reporting an empty cache for an install
-// that was simply still in progress — a flaky test, which is worse than no
-// test, because it teaches people to re-run red rather than read it.
-await page.waitForFunction(
-  async () => {
-    const s = await (await import('/src/intel/offline.js')).status();
-    return s.controlled && s.files >= 50 && s.cachedBytes > 500000;
-  },
-  null,
-  { timeout: 45000 },
-).catch(() => {});
+// soon as it activates and only then works through the file list, so reading
+// the cache the instant control arrives finds it empty.
+//
+// Polled from here with `page.evaluate` rather than with
+// `page.waitForFunction`. The predicate has to `await` — it imports a module
+// and calls an async `status()` — and an async predicate inside
+// waitForFunction did not behave as intended: this suite reported
+// `controlled: false` and `0 files` against an application that, measured
+// directly under the same conditions, had 65 files cached and a controller
+// one second after boot. The product was never broken; the wait was. A plain
+// loop leaves no room for that ambiguity.
+const cacheReady = async () => {
+  const deadline = Date.now() + 45000;
+  let last = null;
+  while (Date.now() < deadline) {
+    last = await page.evaluate(async () => (await import('/src/intel/offline.js')).status());
+    if (last.controlled && last.files >= 50 && last.cachedBytes > 500000) return last;
+    await page.waitForTimeout(500);
+  }
+  return last;
+};
+await cacheReady();
 const st = await page.evaluate(async () => (await import('/src/intel/offline.js')).status());
 ok('a service worker registers and takes control', st.controlled === true, JSON.stringify({ registered: st.registered, controlled: st.controlled }));
 ok('it caches the whole application, not a page of it', st.files >= 50, `${st.files} files`);
