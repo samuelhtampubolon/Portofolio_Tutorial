@@ -2944,7 +2944,7 @@ class App {
           ['Project format', `${FILE_EXT} — plain JSON`],
           ['Licence', 'MIT'],
         ]),
-        el('p', { class: 'hint', html: 'Built as a single static site. <a href="https://github.com/samuelhtampubolon/Portofolio_Tutorial" target="_blank" rel="noopener">Source on GitHub</a>.' }),
+        el('p', { class: 'hint', html: 'Built as a single static site. <a href="https://github.com/samuelhtampubolon/TesserCAD" target="_blank" rel="noopener">Source on GitHub</a>.' }),
       ],
       actions: [{ label: 'Close', primary: true }],
     });

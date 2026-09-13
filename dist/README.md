@@ -2,7 +2,7 @@
 
 **The builds are not in this folder, and cannot be.** If you came here looking
 for them, they are on the
-[**Releases page**](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases).
+[**Releases page**](https://github.com/samuelhtampubolon/TesserCAD/releases).
 
 ## Why not here
 
@@ -29,7 +29,7 @@ repository's front page, which makes them easier to find than a folder.
 
 | | |
 |---|---|
-| **Releases** | [github.com/samuelhtampubolon/Portofolio_Tutorial/releases](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases) |
+| **Releases** | [github.com/samuelhtampubolon/TesserCAD/releases](https://github.com/samuelhtampubolon/TesserCAD/releases) |
 | **No download at all** | The hosted version is the same application and installs nothing |
 
 On Windows, take the **`.zip`** rather than the installer. It extracts nothing

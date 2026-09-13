@@ -3,7 +3,7 @@
 ## Reporting something
 
 Open an issue at
-[github.com/samuelhtampubolon/Portofolio_Tutorial/issues](https://github.com/samuelhtampubolon/Portofolio_Tutorial/issues).
+[github.com/samuelhtampubolon/TesserCAD/issues](https://github.com/samuelhtampubolon/TesserCAD/issues).
 There is no server, no user account and no stored user data anywhere but the
 machine the application is running on, so there is no incident response to
 co-ordinate and nothing gained by reporting privately first. A public issue gets
@@ -225,8 +225,17 @@ actually matters** — did this binary come from this source:
 
 ```bash
 gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
-  --repo samuelhtampubolon/Portofolio_Tutorial
+  --repo samuelhtampubolon/TesserCAD
 ```
+
+> **Artefacts published before the repository was renamed** record the old name
+> inside their attestation, because the name is baked in at build time. The
+> v1.0.4 attestation names
+> `https://github.com/samuelhtampubolon/Portofolio_Tutorial@refs/tags/v1.0.4`,
+> so for those files pass `--repo samuelhtampubolon/Portofolio_Tutorial`
+> instead. The underlying repository id is unchanged (`1240582571`), and the
+> next release carries the new name, after which only the command above is
+> needed.
 
 Every artefact is published with a signed build-provenance attestation naming
 the commit, the workflow and the runner that produced it, recorded in a public

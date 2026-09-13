@@ -8,14 +8,14 @@ No installation, no account, no server. Your model never leaves your machine.
 ![No build step](https://img.shields.io/badge/build-none-4c9fff)
 ![Zero runtime dependencies](https://img.shields.io/badge/runtime%20deps-0-4c9fff)
 ![202 commands](https://img.shields.io/badge/commands-202-8957e5)
-![1300 tests](https://img.shields.io/badge/tests-1300%20passing-3da639)
+![1309 tests](https://img.shields.io/badge/tests-1309%20passing-3da639)
 ![Touch ready](https://img.shields.io/badge/touch-ready-4c9fff)
 
 > **▶ Use it now, nothing to install:**
-> https://samuelhtampubolon.github.io/Portofolio_Tutorial/
+> https://samuelhtampubolon.github.io/TesserCAD/
 >
 > **⬇ Download it for offline use:**
-> [**Releases**](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+> [**Releases**](https://github.com/samuelhtampubolon/TesserCAD/releases)
 > — take the Windows **`.zip`**, unzip, run `TesserCAD.exe`. No installer, no
 > administrator prompt. There is a Linux build as well. **There is no macOS
 > build**: an unsigned, un-notarised `.dmg` is refused outright by Gatekeeper
@@ -668,7 +668,7 @@ value is a gesture, not a type-tab-commit cycle.
 
 ## Getting started
 
-Open the [live app](https://samuelhtampubolon.github.io/Portofolio_Tutorial/) and it loads a
+Open the [live app](https://samuelhtampubolon.github.io/TesserCAD/) and it loads a
 demo bracket. Then:
 
 1. **Model** — click the bracket, and on the right change `plate_w` from `120` to `180`.
@@ -688,8 +688,8 @@ There is a longer walkthrough in **[docs/USER-GUIDE.md](docs/USER-GUIDE.md)**.
 The app is static ES modules with no build step. Any static file server works:
 
 ```bash
-git clone https://github.com/samuelhtampubolon/Portofolio_Tutorial.git
-cd Portofolio_Tutorial
+git clone https://github.com/samuelhtampubolon/TesserCAD.git
+cd TesserCAD
 npm run serve          # or: python3 -m http.server 8080
 # open http://localhost:8080
 ```
@@ -752,7 +752,7 @@ npx playwright-core install chromium     # the browser itself, about 150 MB
 npm run test:browser                     # or: node tools/browser/run.mjs app ui
 ```
 
-Ten suites, 385 checks, driving a real headless Chromium against a server they
+Eleven suites, 394 checks, driving a real headless Chromium against a server they
 start themselves.
 They are what caught the phone chrome leaking onto the desktop layout, a
 21-pixel touch target, and a drawing dialog that read a field by the wrong name.
@@ -926,9 +926,14 @@ no dependencies to install, so a clone and a static server is the whole developm
 
 ## About this repository
 
-`Portofolio_Tutorial` is a portfolio repository; alongside TesserCAD it holds a set of
-machine-learning Colab notebooks (`*.ipynb` in the root). They are unrelated to the CAD app
-and are kept here as part of the same portfolio.
+This repository is named after the application, and the application is nearly all of
+it. Four machine-learning Colab notebooks (`*.ipynb` in the root) also live here for
+historical reasons: the repository began as a general portfolio and was renamed once
+TesserCAD outgrew it. The notebooks share no code with the CAD application, are not
+imported by it, are not packaged into any build, and are not covered by its tests.
+
+If you cloned this for TesserCAD, everything you want is `index.html`, `src/`,
+`styles/`, `vendor/` and `desktop/`. The notebooks can be ignored entirely.
 
 ## Desktop application, for local and offline use
 
@@ -941,7 +946,7 @@ downloads, and **the zip is the one to take**:
 | `TesserCAD-<version>-setup.exe` | A per-user installer, if you want a Start-menu entry. Never elevates, never writes outside your profile |
 
 AppImage, tar.gz and dmg builds come from the same workflow. Get them from the
-[Releases](https://github.com/samuelhtampubolon/Portofolio_Tutorial/releases)
+[Releases](https://github.com/samuelhtampubolon/TesserCAD/releases)
 page, or trigger **Actions → Desktop build** on your own fork.
 
 ### About the Windows security warning
@@ -974,8 +979,17 @@ publisher does not control:
 
 ```bash
 gh attestation verify TesserCAD-1.0.4-windows-x64.zip \
-  --repo samuelhtampubolon/Portofolio_Tutorial
+  --repo samuelhtampubolon/TesserCAD
 ```
+
+> **Artefacts published before the repository was renamed** record the old name
+> inside their attestation, because the name is baked in at build time. The
+> v1.0.4 attestation names
+> `https://github.com/samuelhtampubolon/Portofolio_Tutorial@refs/tags/v1.0.4`,
+> so for those files pass `--repo samuelhtampubolon/Portofolio_Tutorial`
+> instead. The underlying repository id is unchanged (`1240582571`), and the
+> next release carries the new name, after which only the command above is
+> needed.
 
 A certificate says someone paid for an identity. That says *this exact file was
 built from that exact commit*. [SECURITY.md](SECURITY.md) covers the
