@@ -1114,10 +1114,11 @@ size, the third-party material and its terms, what is claimed as original, and
 the known limitations.
 
 It states one thing up front rather than leaving it to be discovered: **the
-code was written with substantial AI assistance**, which is recorded in the git
-history itself through `Co-Authored-By` trailers. How copyright treats
-AI-assisted work is unsettled and varies by jurisdiction, so anyone registering
-or relying on this work should disclose that and take their own advice.
+code was written with substantial AI assistance**. That statement, and not any
+per-commit metadata, is the authoritative record of it, and it covers the whole
+source. How copyright treats AI-assisted work is unsettled and varies by
+jurisdiction, so anyone registering or relying on this work should disclose
+that and take their own advice.
 
 ## How this compares to those thirteen
 

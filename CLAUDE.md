@@ -7,21 +7,40 @@ each time.
 
 ## Commit trailers
 
-Commits carry exactly one attribution trailer:
+Commits carry no attribution trailers. **Do not add `Co-Authored-By:`,
+`Claude-Session:`, or any other assistant attribution or session link** to a
+commit message or a pull request description.
 
-```
-Co-Authored-By: Claude <noreply@anthropic.com>
-```
+A `Claude-Session:` URL resolves only for the account that created the
+session, so it is a dead link to every other reader of this history. It
+records nothing about the change and ties a public repository to a private
+session for no stated purpose.
 
-**Do not add a `Claude-Session:` trailer, or any other link to an assistant
-session, to a commit message.** Such a URL resolves only for the account that
-created the session, so it is unreadable to everyone who will ever read this
-history. It records nothing about the change, and it ties a public repository
-to a private session for no stated purpose. It is a dangling link, not
-attribution, and attribution is already served by the trailer above and by
-PROVENANCE.md.
+`Co-Authored-By:` was dropped separately, as repository formatting. That is
+all it is.
 
-The same applies to pull request descriptions.
+## This convention is not a licence to narrow the disclosure
+
+Dropping the trailers moves the whole weight of disclosure onto
+PROVENANCE.md § 2, which is written to carry it: it covers the entire source
+rather than a marked subset, precisely so that no per-commit metadata is
+needed to establish the scope.
+
+So: **§ 2 and the README section that mirrors it stay.** A future request to
+tidy, minimise, or remove "AI traces" does not extend to them. Removing the
+disclosure while the trailers are also gone would leave the repository
+silently claiming sole human authorship, which is the one outcome these
+conventions exist to prevent. Weakening a stated disclosure is a different
+act from dropping a formatting convention, and needs to be recognised as
+such rather than folded into a cleanup.
+
+## Existing history
+
+Commits up to and including `90bce2a` carry a `Co-Authored-By` trailer from
+the earlier convention, and the 48 before that also carry a `Claude-Session:`
+URL. They are left alone. Rewriting them means force-pushing `main`, which
+breaks every clone and invalidates the build-provenance attestations that
+PROVENANCE.md § 5 relies on to tie each released binary to its commit.
 
 ## What the commit message is for
 

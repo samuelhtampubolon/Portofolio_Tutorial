@@ -42,11 +42,22 @@ decisions, and owns the repository.
 
 **The code was written with substantial assistance from an AI system**
 (Anthropic's Claude, via Claude Code). This is not incidental and it is not
-hidden: it is recorded in the git history itself. Commits carry
-`Co-Authored-By: Claude <noreply@anthropic.com>` trailers, and `git log` names
-Claude as an author alongside the repository owner. Anyone examining the
-history will see it immediately, so it is stated here first rather than
-discovered later.
+hidden. **This section is the disclosure, and it is the authoritative one.**
+It covers the whole of this repository's source, not a marked subset of it,
+and it is stated here first rather than left to be discovered later.
+
+The git history corroborates that only in part, and the limit matters.
+Commits up to and including `90bce2a` carry `Co-Authored-By: Claude
+<noreply@anthropic.com>` trailers, so `git log` names Claude as an author
+alongside the repository owner across that range. Commits after it do not
+carry the trailer, following the convention recorded in
+[CLAUDE.md](CLAUDE.md).
+
+**A missing trailer therefore says nothing about how a commit was written.**
+It reflects a change in this repository's commit formatting, not a change in
+how the work is produced. Anyone sizing the AI contribution by counting
+trailers will undercount it, and should rely on the statement above
+instead.
 
 ### Why this is flagged rather than glossed
 
